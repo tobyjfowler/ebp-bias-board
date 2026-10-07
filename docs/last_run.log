@@ -1,7 +1,5 @@
-databento GLBX.MDP3 available through 2026-10-07 05:28:51.817940+00:00
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:100: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded), 2025-09-17 (degraded), 2025-09-24 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-databento: ERROR NQ: no rows from Databento (symbol NQ.c.0)
+databento GLBX.MDP3 available through 2026-10-07 05:31:55.229102+00:00
+databento: ERROR 504 The remote gateway timed out.
 NQ: ERROR no Databento data
 ES: ERROR no Databento data
 YM: ERROR no Databento data

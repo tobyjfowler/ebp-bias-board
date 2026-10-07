@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-07T13:30:05.486069+00:00",
-  "generated_at_ny": "2026-10-07T09:28:50.497129-04:00",
+  "generated_at": "2026-10-07T13:32:56.050133+00:00",
+  "generated_at_ny": "2026-10-07T09:31:54.272531-04:00",
   "timeframes": [
     "D",
     "3D",
@@ -15,7 +15,7 @@
   },
   "assets": [],
   "errors": [
-    "databento: NQ: no rows from Databento (symbol NQ.c.0)",
+    "databento: 504 The remote gateway timed out.",
     "NQ: no Databento data",
     "ES: no Databento data",
     "YM: no Databento data",
