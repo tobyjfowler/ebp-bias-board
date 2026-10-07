@@ -78,6 +78,30 @@
 
   .tfhead .range { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--muted); margin-top: 2px; }
 
+  /* Intraday strip (6H / 4H / 1H) under each asset */
+  .intraday { grid-column: 1 / -1; display: grid; grid-template-columns: auto repeat(3, minmax(0, 1fr)); gap: 0 18px; align-items: start; padding: 8px 12px !important; border-top: 1px dashed var(--line); }
+  .intraday .ilabel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  .isig { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 12px; }
+  .isig .itf { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 2.2em; flex: none; }
+  .isig .pill { font-size: 11px; padding: 3px 7px; }
+  .isig .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .isig .meta b { color: var(--fg); font-weight: 500; }
+  .isig .q { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 5px; border-radius: 3px; flex: none; }
+  .isig .q.yes { background: var(--fg); color: var(--bg); }
+  .isig .q.no { border: 1px solid var(--line); color: var(--muted); }
+  .isig.unq { opacity: 0.42; }
+  .isig.unq .pill { background: var(--neutral); color: var(--fg); }
+  .isig.unq .pill.failed { background: transparent; color: var(--muted); }
+  .isig.none { color: var(--muted); }
+  body.hide-unq .isig.unq { visibility: hidden; }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--fg); }
+  .relay-note { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+  @media (max-width: 720px) {
+    .intraday { grid-template-columns: 1fr; gap: 6px; padding: 10px 14px !important; }
+    .intraday .ilabel { margin-bottom: 2px; }
+  }
+
   footer { margin-top: 18px; font-size: 12px; color: var(--muted); max-width: 65ch; }
   footer p { margin: 6px 0; }
 
@@ -118,6 +142,7 @@
     <span><span class="sw" style="background:var(--bear)"></span>Bearish EBP</span>
     <span><span class="sw" style="background:var(--neutral)"></span>Neutral</span>
     <span><span class="sw" style="border:1.5px dashed var(--muted)"></span>Failed (price traded through the sweep level)</span>
+    <label class="toggle" id="toggle-unq-label"><input type="checkbox" id="toggle-unq"> Hide unqualified intraday signals</label>
   </div>
 
   <div class="board" id="board"></div>
@@ -125,11 +150,15 @@
   <footer>
     <p>Each cell is the last closed candle on that timeframe. Bullish: it swept the prior candle's low and closed above the prior open. Bearish: it swept the prior high and closed below the prior open. The level shown is the sweep extreme, which is where the pattern fails.</p>
     <p>Daily candles run 18:00 to 17:00 New York. 3-day candles are counted in threes from the first trading day of each year, matching TradingView.</p>
+    <p>Intraday row: the latest 6H, 4H and 1H EBP per asset, sent live from TradingView. A signal is <b>qualified</b> when at least one higher timeframe has an intact EBP in the same direction; otherwise it is shown faded and no alert is sent.</p>
   </footer>
 </div>
 
 <script>
 (function () {
+  // Relay that receives TradingView webhooks and serves intraday signals. Blank = intraday off.
+  const RELAY_URL = "";
+  const ITF_ORDER = ["6H", "4H", "1H"];
   const TF_ORDER = ["M", "W", "3D", "D"];
   const TF_SHORT = { M: "Monthly", W: "Weekly", "3D": "3-Day", D: "Daily" };
   const fmtNum = (n, dec) => n == null ? "—" : Number(n).toLocaleString("en-GB", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -165,7 +194,59 @@
     return `<div class="cell"><span class="tf">${TF_SHORT[tf]}</span>${pill}${lvl}<span class="sub">${range}${forming}<br>${next}</span></div>`;
   }
 
+  function ago(iso) {
+    if (!iso) return "";
+    const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+    if (m < 60) return m + "m ago";
+    const h = Math.floor(m / 60);
+    if (h < 48) return h + "h " + (m % 60) + "m ago";
+    return Math.floor(h / 24) + "d ago";
+  }
+
+  function qualified(asset, dir) {
+    return TF_ORDER.some(tf => { const t = asset.timeframes[tf]; return t && t.bias === dir && t.intact === true; });
+  }
+
+  function intradayHtml(asset, latest, dec) {
+    const sigs = (latest && latest[asset.key]) || {};
+    const cells = ITF_ORDER.map(tf => {
+      const s = sigs[tf];
+      if (!s) return `<div class="isig none"><span class="itf">${tf}</span><span class="meta">no signal yet</span></div>`;
+      const q = qualified(asset, s.dir);
+      const label = s.dir === "bullish" ? "BULL" : "BEAR";
+      const lvl = s.failed ? `failed at <b>${fmtNum(s.sweep, dec)}</b>` : `${s.dir === "bullish" ? "fails below" : "fails above"} <b>${fmtNum(s.sweep, dec)}</b>`;
+      return `<div class="isig ${q ? "" : "unq"}">
+        <span class="itf">${tf}</span>
+        <span class="pill ${s.dir} ${s.failed ? "failed" : ""}"><span class="lbl">${label}</span></span>
+        <span class="meta">${ago(s.candle_close)} · ${lvl}</span>
+        <span class="q ${q ? "yes" : "no"}">${q ? "qualified" : "unqualified"}</span>
+      </div>`;
+    }).join("");
+    return `<div class="intraday"><span class="ilabel">Intraday</span>${cells}</div>`;
+  }
+
+  let htfData = null, relayData = null;
+
+  function renderIntraday() {
+    if (!htfData) return;
+    document.querySelectorAll(".intraday").forEach(el => el.remove());
+    if (!RELAY_URL) return;
+    for (const a of htfData.assets) {
+      const card = document.querySelector(`.card[data-key="${a.key}"]`);
+      if (card) card.insertAdjacentHTML("beforeend", intradayHtml(a, relayData && relayData.latest, decimalsFor(a.key)));
+    }
+  }
+
+  function loadRelay() {
+    if (!RELAY_URL) return;
+    fetch(RELAY_URL.replace(/\/$/, "") + "/signals", { cache: "no-store" })
+      .then(r => r.json())
+      .then(d => { relayData = d; renderIntraday(); })
+      .catch(() => { relayData = null; renderIntraday(); });
+  }
+
   function render(data) {
+    htfData = data;
     document.getElementById("banner").hidden = !data.sample;
     document.getElementById("gen").textContent = "updated " + fmtDate(data.generated_at);
     const board = document.getElementById("board");
@@ -175,7 +256,7 @@
       const al = a.alignment || {};
       const dots = TF_ORDER.map(tf => `<i class="${a.timeframes[tf]?.bias ?? ""}"></i>`).join("");
       const alignTxt = al.summary === "mixed" ? `${al.bullish ?? 0} bull · ${al.bearish ?? 0} bear` : `${al.summary} ${al.summary === "bullish" ? al.bullish : al.bearish}/4`;
-      html += `<div class="card">
+      html += `<div class="card" data-key="${a.key}">
         <div class="asset">
           <span class="sym">${a.key}</span><span class="name">${a.name}</span>
           <span class="px">${fmtNum(a.price, dec)}${a.last_daily_closed ? "" : " <span style='color:var(--warn)'>live</span>"}</span>
@@ -185,16 +266,32 @@
       </div>`;
     }
     board.innerHTML = html;
+    renderIntraday();
+    if (!RELAY_URL) {
+      document.getElementById("toggle-unq-label").hidden = true;
+    }
     if (data.errors && data.errors.length) {
       board.insertAdjacentHTML("afterend", `<p class="sub" style="color:var(--warn);margin-top:10px">Problems on last refresh: ${data.errors.join("; ")}</p>`);
     }
   }
 
+  // Hide-unqualified toggle (remembered per browser)
+  const tog = document.getElementById("toggle-unq");
+  try { tog.checked = localStorage.getItem("ebp-hide-unq") === "1"; } catch (e) {}
+  document.body.classList.toggle("hide-unq", tog.checked);
+  tog.addEventListener("change", () => {
+    document.body.classList.toggle("hide-unq", tog.checked);
+    try { localStorage.setItem("ebp-hide-unq", tog.checked ? "1" : "0"); } catch (e) {}
+  });
+
   fetch("data.json", { cache: "no-store" })
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(render)
+    .then(d => { render(d); loadRelay(); })
     .catch(err => {
       document.getElementById("gen").textContent = "Could not load data.json (" + err.message + ")";
     });
+
+  // Keep the intraday strip fresh while the page is open
+  setInterval(loadRelay, 60000);
 })();
 </script>

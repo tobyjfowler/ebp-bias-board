@@ -1,0 +1,123 @@
+//@version=6
+indicator("EBP MTF Webhook (6H/4H/1H)", "EBP MTF", overlay = true)
+
+// ─────────────────────────────────────────────────────────────
+// One instance per asset. Put it on a 1H (or lower) chart and create ONE alert:
+//   Condition: EBP MTF → "Any alert() function call"
+//   Webhook URL: your relay URL
+//   Message: {{message}}
+// It sends a "signal" event when a 6H / 4H / 1H EBP confirms, and a "fail" event
+// when price trades back through that signal's sweep level.
+// ─────────────────────────────────────────────────────────────
+
+grpS          = "Signal rules"
+reqOpp        = input.bool(true, "Require opposite-colour prior candle", group = grpS)
+minSweepTicks = input.int(1, "Minimum sweep (ticks)", minval = 1, group = grpS)
+
+grpW     = "Webhook"
+assetKey = input.string("", "Asset key (NQ, ES, YM, RTY, GC, CL)", group = grpW,
+     tooltip = "Blank = first letters of the chart symbol. Must match the board's asset keys.")
+secret   = input.string("", "Shared secret", group = grpW,
+     tooltip = "Same value as the SIGNAL_SECRET on the relay. Keep it private.")
+
+grpD    = "Display"
+bullCol = input.color(color.teal, "Bullish colour", group = grpD)
+bearCol = input.color(color.red,  "Bearish colour", group = grpD)
+
+// ─────────────────────────────────────────────────────────────
+// EBP logic (evaluated on the signal timeframe)
+// ─────────────────────────────────────────────────────────────
+ebp() =>
+    bullSweepTicks = math.round((low[1] - low) / syminfo.mintick)
+    bearSweepTicks = math.round((high - high[1]) / syminfo.mintick)
+    bull = bullSweepTicks >= minSweepTicks and close > open[1] and (not reqOpp or close[1] < open[1])
+    bear = bearSweepTicks >= minSweepTicks and close < open[1] and (not reqOpp or close[1] > open[1])
+    [bull, bear, low, high, close, open[1], time, time_close]
+
+// Values of the last CLOSED bar on the signal timeframe (safe with lookahead_on)
+ebpClosed() =>
+    [b, s, l, h, c, po, t0, t1] = ebp()
+    [b[1], s[1], l[1], h[1], c[1], po[1], t0[1], t1[1]]
+
+chartSecs = timeframe.in_seconds()
+chartOk   = chartSecs <= 3600
+
+key = assetKey != "" ? assetKey : str.replace_all(str.replace_all(syminfo.ticker, "1!", ""), "!", "")
+
+jsonEsc(string s) => str.replace_all(str.replace_all(s, "\\", "\\\\"), "\"", "\\\"")
+
+// Per-timeframe state
+type TfState
+    string tf
+    string dir = "none"
+    float  sweep = na
+    bool   failed = false
+    int    closeTime = na
+
+var tf6 = TfState.new("6H")
+var tf4 = TfState.new("4H")
+var tf1 = TfState.new("1H")
+
+// Pull closed-bar EBP results from each timeframe
+[b6, s6, l6, h6, c6, po6, t06, t16] = request.security(syminfo.tickerid, "360", ebpClosed(), lookahead = barmerge.lookahead_on)
+[b4, s4, l4, h4, c4, po4, t04, t14] = request.security(syminfo.tickerid, "240", ebpClosed(), lookahead = barmerge.lookahead_on)
+[b1, s1, l1, h1, c1, po1, t01, t11] = request.security(syminfo.tickerid, "60",  ebpClosed(), lookahead = barmerge.lookahead_on)
+
+new6 = timeframe.change("360")
+new4 = timeframe.change("240")
+new1 = timeframe.change("60")
+
+msgSignal(string tf, string dir, float sweep, float c, float po, int t0, int t1) =>
+    '{"event":"signal","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
+     '","tf":"' + tf + '","dir":"' + dir +
+     '","close":' + str.tostring(c, format.mintick) + ',"sweep":' + str.tostring(sweep, format.mintick) +
+     ',"prior_open":' + str.tostring(po, format.mintick) +
+     ',"candle_open":' + str.tostring(t0) + ',"candle_close":' + str.tostring(t1) + '}'
+
+msgFail(string tf, string dir, float sweep, int t1) =>
+    '{"event":"fail","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
+     '","tf":"' + tf + '","dir":"' + dir + '","sweep":' + str.tostring(sweep, format.mintick) +
+     ',"candle_close":' + str.tostring(t1) + ',"failed_at":' + str.tostring(time) + '}'
+
+handle(TfState st, bool isNew, bool bull, bool bear, float lo, float hi, float c, float po, int t0, int t1) =>
+    bool fired = false
+    string firedDir = ""
+    if chartOk and isNew and (bull or bear)
+        st.dir := bull ? "bullish" : "bearish"
+        st.sweep := bull ? lo : hi
+        st.failed := false
+        st.closeTime := t1
+        alert(msgSignal(st.tf, st.dir, st.sweep, c, po, t0, t1), alert.freq_once_per_bar)
+        fired := true
+        firedDir := st.dir
+    // failure check on every chart bar, including the live one
+    if chartOk and st.dir != "none" and not st.failed and not (isNew and fired)
+        hit = st.dir == "bullish" ? low < st.sweep : high > st.sweep
+        if hit
+            st.failed := true
+            alert(msgFail(st.tf, st.dir, st.sweep, st.closeTime), alert.freq_once_per_bar)
+    [fired, firedDir]
+
+[f6, d6] = handle(tf6, new6, b6, s6, l6, h6, c6, po6, t06, t16)
+[f4, d4] = handle(tf4, new4, b4, s4, l4, h4, c4, po4, t04, t14)
+[f1, d1] = handle(tf1, new1, b1, s1, l1, h1, c1, po1, t01, t11)
+
+// ─────────────────────────────────────────────────────────────
+// Visuals: markers on the chart bar where each timeframe's EBP confirmed
+// ─────────────────────────────────────────────────────────────
+plotshape(f6 and d6 == "bullish", "6H bull", shape.triangleup,   location.belowbar, bullCol, text = "6H", size = size.small)
+plotshape(f6 and d6 == "bearish", "6H bear", shape.triangledown, location.abovebar, bearCol, text = "6H", size = size.small)
+plotshape(f4 and d4 == "bullish", "4H bull", shape.triangleup,   location.belowbar, bullCol, text = "4H", size = size.tiny)
+plotshape(f4 and d4 == "bearish", "4H bear", shape.triangledown, location.abovebar, bearCol, text = "4H", size = size.tiny)
+plotshape(f1 and d1 == "bullish", "1H bull", shape.triangleup,   location.belowbar, color.new(bullCol, 40), text = "1H", size = size.tiny)
+plotshape(f1 and d1 == "bearish", "1H bear", shape.triangledown, location.abovebar, color.new(bearCol, 40), text = "1H", size = size.tiny)
+
+if barstate.islast
+    string warn = not chartOk ? "Chart must be 1H or lower" : secret == "" ? "Shared secret is empty" : ""
+    if warn != ""
+        var table w = table.new(position.top_right, 1, 1)
+        w.cell(0, 0, "EBP MTF: " + warn, bgcolor = color.new(color.red, 20), text_color = color.white)
+    else
+        var table info = table.new(position.top_right, 1, 1)
+        info.cell(0, 0, "EBP MTF · " + key + " · 6H " + tf6.dir + (tf6.failed ? " (failed)" : "") + " · 4H " + tf4.dir + (tf4.failed ? " (failed)" : "") + " · 1H " + tf1.dir + (tf1.failed ? " (failed)" : ""),
+             bgcolor = color.new(color.gray, 70), text_color = color.white, text_size = size.small)
