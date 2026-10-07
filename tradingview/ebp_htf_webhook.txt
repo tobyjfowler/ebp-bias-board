@@ -229,10 +229,15 @@ if chartOk and barstate.isconfirmed
         tfM.finalize()
     alert(msgHtf("close"), alert.freq_once_per_bar_close)
 
-// Session open: send the current state too (also fires once when an alert is first created,
-// which populates the board straight away)
+// Session open: send the current state too
 if chartOk and barstate.isnew
     alert(msgHtf(corrected ? "correction" : "open"), alert.freq_once_per_bar)
+
+// First real-time tick after the alert is created: send the current state so the board fills in at once
+var bool booted = false
+if chartOk and barstate.isrealtime and not booted
+    booted := true
+    alert(msgHtf("startup"), alert.freq_once_per_bar)
 
 // ─────────────────────────────────────────────────────────────
 // Visuals
