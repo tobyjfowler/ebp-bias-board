@@ -32,7 +32,13 @@ jobs:
           DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
         run: |
           set -o pipefail
+          git show HEAD:docs/data.json > /tmp/previous.json 2>/dev/null || true
           python ebp_engine.py --source databento --history-dir docs/history --out docs/data.json --raw-dir docs/raw 2>&1 | tee docs/last_run.log
+      - name: Telegram summary (only when biases changed)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python telegram_summary.py docs/data.json /tmp/previous.json 2>&1 | tee -a docs/last_run.log
       - name: Commit if changed
         if: always()
         run: |
