@@ -127,7 +127,7 @@ def merge_holiday_sessions(daily: pd.DataFrame) -> pd.DataFrame:
 def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, backfill_from: str = "2024-01-01") -> dict[str, pd.DataFrame]:
     """
     Daily session bars (18:00-17:00 New York) built from Databento hourly bars for the
-    continuous front-month contracts (NQ.c.0 etc, calendar roll at expiry, unadjusted).
+    continuous contracts (see ROLL_RULE; unadjusted, like TradingView's 1! symbols with back-adjustment off).
     Keeps a per-asset CSV cache in history_dir so each run only fetches recent days.
     """
     import databento as db
@@ -140,17 +140,19 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
     print(f"databento GLBX.MDP3 available through {avail_end}", file=sys.stderr)
 
     cache: dict[str, pd.DataFrame] = {}
-    start = pd.Timestamp(backfill_from, tz="UTC")
+    full_start = pd.Timestamp(backfill_from, tz="UTC")
     if history_dir:
         history_dir.mkdir(parents=True, exist_ok=True)
         for k in keys:
             f = history_dir / f"{k}.csv"
             if f.exists():
                 cache[k] = pd.read_csv(f, parse_dates=["date"]).set_index("date")
-        if len(cache) == len(keys):
-            last = min(df.index.max() for df in cache.values())
-            # refetch the last few sessions so any partial day is rebuilt
-            start = (pd.Timestamp(last) - pd.Timedelta(days=4)).tz_localize("UTC")
+
+    def start_for(k: str) -> pd.Timestamp:
+        # refetch the last few sessions so any partial day is rebuilt; full backfill if no cache
+        if k in cache and len(cache[k]):
+            return (pd.Timestamp(cache[k].index.max()) - pd.Timedelta(days=4)).tz_localize("UTC")
+        return full_start
 
     import time as _time
 
@@ -174,7 +176,7 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
 
     chunks: list[pd.DataFrame] = []
     for k in keys:
-        s0 = start
+        s0 = start_for(k)
         while s0 < end:
             s1 = min(end, pd.Timestamp(year=s0.year + 1, month=1, day=1, tz="UTC"))
             d = fetch(cont_symbol(k), s0, s1)
