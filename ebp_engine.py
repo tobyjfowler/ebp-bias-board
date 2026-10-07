@@ -280,6 +280,7 @@ def main() -> int:
     ap.add_argument("--csv-dir", type=Path, help="Folder of TradingView CSV exports named NQ.csv, ES.csv ... (skips Yahoo)")
     ap.add_argument("--out", type=Path, default=Path("docs/data.json"))
     ap.add_argument("--now", help="Override 'now' (ISO, New York time) for testing")
+    ap.add_argument("--raw-dir", type=Path, help="Also save the daily bars used, one CSV per asset")
     args = ap.parse_args()
 
     now_ny = datetime.fromisoformat(args.now).replace(tzinfo=NY) if args.now else datetime.now(NY)
@@ -298,6 +299,9 @@ def main() -> int:
             else:
                 daily = load_yahoo(ysym)
                 source = f"yahoo:{ysym}"
+            if args.raw_dir:
+                args.raw_dir.mkdir(parents=True, exist_ok=True)
+                daily.to_csv(args.raw_dir / f"{key}.csv")
             a = analyse_asset(daily, dec, now_ny)
             a.update({"key": key, "name": name, "tv_symbol": tvsym, "source": source})
             assets_out.append(a)
