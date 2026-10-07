@@ -71,7 +71,8 @@ def main() -> int:
 
     cur_state = state(data)
     prev_state = state(prev) if prev else {}
-    if prev and cur_state == prev_state:
+    force = os.environ.get("FORCE_SUMMARY", "").lower() == "true"
+    if prev and cur_state == prev_state and not force:
         print("no change in HTF biases; not sending", file=sys.stderr)
         return 0
 

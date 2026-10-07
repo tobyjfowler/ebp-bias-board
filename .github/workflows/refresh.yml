@@ -8,6 +8,11 @@ on:
     - cron: "10 3 * * 2-6"    # late-night catch-up in case the close bar arrived late
     - cron: "30 23 * * 0"     # Sunday evening after the Globex open
   workflow_dispatch:
+    inputs:
+      force_summary:
+        description: "Send the Telegram summary even if nothing changed"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -38,6 +43,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FORCE_SUMMARY: ${{ inputs.force_summary }}
         run: python telegram_summary.py docs/data.json /tmp/previous.json 2>&1 | tee -a docs/last_run.log
       - name: Commit if changed
         if: always()
