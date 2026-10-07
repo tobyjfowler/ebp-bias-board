@@ -7,6 +7,8 @@
  *                     event "htf"      daily close / session open update of D/3D/W/M biases → EBP HTF indicator
  *                     event "htf_fail" an HTF EBP's sweep level traded through
  *                     event "test"     sends a Telegram test message
+ * POST /telegram    Telegram bot webhook: /bias, /signals, /nq … /cl, /help. Register it once by opening
+ *                     https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<worker>/telegram&secret_token=<SIGNAL_SECRET>
  * GET  /signals     Everything the board needs: htf (per asset), latest intraday, recent events.
  * GET  /health      Plain OK.
  *
@@ -55,6 +57,9 @@ export default {
       ]);
       return json({ htf, latest, recent, meta, served_at: new Date().toISOString() });
     }
+
+    // Telegram bot commands (Telegram → relay webhook)
+    if (request.method === "POST" && url.pathname === "/telegram") return handleTelegramUpdate(request, env);
 
     if (request.method === "POST" && (url.pathname === "/" || url.pathname === "/signal")) {
       let body;
@@ -265,6 +270,108 @@ function qualifiedBy(htf, asset, dir) {
   const a = htf[asset];
   if (!a) return [];
   return HTFS.filter(tf => { const t = a.timeframes[tf]; return t && t.bias === dir && t.intact === true; });
+}
+
+// ── Telegram bot commands ──────────────────────────────────────────────────
+async function handleTelegramUpdate(request, env) {
+  // Telegram sends the secret_token we registered in this header
+  if (!env.SIGNAL_SECRET || request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.SIGNAL_SECRET) return json({ ok: false }, 401);
+  let update;
+  try { update = await request.json(); } catch { return json({ ok: true }); }
+  const msg = update.message || update.edited_message;
+  if (!msg || !msg.text) return json({ ok: true });
+  if (String(msg.chat.id) !== String(env.TELEGRAM_CHAT_ID || "").trim()) return json({ ok: true }); // only answer the owner
+
+  const cmd = msg.text.trim().split(/\s+/)[0].toLowerCase().replace(/@.*$/, "");
+  const [htf, latest] = await Promise.all([kvGet(env, "htf", {}), kvGet(env, "latest", {})]);
+  let reply;
+  if (cmd === "/bias" || cmd === "/htf") reply = biasText(htf);
+  else if (cmd === "/signals" || cmd === "/intraday") reply = signalsText(htf, latest);
+  else if (ASSETS.includes(cmd.slice(1).toUpperCase())) reply = assetText(cmd.slice(1).toUpperCase(), htf, latest);
+  else if (cmd === "/start" || cmd === "/help") reply = helpText();
+  else reply = "Unknown command.\n" + helpText();
+  await sendTelegram(env, reply);
+  return json({ ok: true });
+}
+
+function helpText() {
+  return [
+    "<b>EBP bot</b>",
+    "/bias – higher-timeframe biases (M · W · 3D · D)",
+    "/signals – latest 6H/4H/1H signals and whether they qualify",
+    "/nq /es /ym /rty /gc /cl – one asset in detail",
+  ].join("\n");
+}
+
+function biasText(htf) {
+  const dates = ASSETS.map(k => htf[k] && htf[k].timeframes.D.candle_end).filter(Boolean).sort();
+  const date = dates.pop();
+  const lines = [`📊 <b>HTF bias${date ? " · as of " + dayLabel(date) + " close" : ""}</b>`];
+  for (const k of ASSETS) {
+    const a = htf[k];
+    if (!a) { lines.push(`<code>${k.padEnd(3)}</code> no data yet`); continue; }
+    const d = a.timeframes.D.candle_end;
+    lines.push(describe(a) + (d && d !== date ? ` <i>(${dayLabel(d)})</i>` : ""));
+  }
+  lines.push("<i>(M · W · 3D · D)</i>");
+  return lines.join("\n");
+}
+
+function signalsText(htf, latest) {
+  const lines = ["⚡ <b>Intraday signals</b>"];
+  let any = false;
+  for (const k of ASSETS) {
+    const sigs = latest[k] || {};
+    const parts = [];
+    for (const tf of ITFS) {
+      const s = sigs[tf];
+      if (!s) continue;
+      any = true;
+      const q = qualifiedBy(htf, k, s.dir).length > 0;
+      parts.push(`${tf} ${s.failed ? "✖" : DOT[s.dir]}${s.dir === "bullish" ? "bull" : "bear"}${q ? " ✓" : ""} ${ago(s.candle_close)}`);
+    }
+    if (parts.length) lines.push(`<code>${k.padEnd(3)}</code> ${parts.join(" · ")}`);
+  }
+  if (!any) lines.push("No intraday signals received yet.");
+  lines.push("<i>✓ = qualified by an intact HTF bias · ✖ = failed</i>");
+  return lines.join("\n");
+}
+
+function assetText(k, htf, latest) {
+  const dec = DECIMALS[k] ?? 2;
+  const a = htf[k];
+  const lines = [`<b>${k} · ${ASSET_NAMES[k]}</b>`];
+  if (!a) {
+    lines.push("No higher-timeframe data yet.");
+  } else {
+    lines.push(`Price ${fmt(a.price, dec)} · as of ${dayLabel(a.timeframes.D.candle_end)} close`);
+    for (const tf of HTFS) {
+      const t = a.timeframes[tf];
+      const failed = t.bias !== "neutral" && t.intact === false;
+      let txt = `${failed ? "✖" : DOT[t.bias]} <b>${HTF_LABEL[tf]}</b> ${t.bias}`;
+      if (t.bias !== "neutral") txt += ` · ${failed ? "failed at" : t.bias === "bullish" ? "fails below" : "fails above"} ${fmt(t.sweep, dec)}`;
+      if (t.forming_bias && t.forming_bias !== "neutral") txt += ` · <i>${t.forming_bias} forming</i>`;
+      lines.push(txt);
+    }
+  }
+  const sigs = latest[k] || {};
+  const parts = [];
+  for (const tf of ITFS) {
+    const s = sigs[tf];
+    if (!s) continue;
+    const q = qualifiedBy(htf, k, s.dir);
+    parts.push(`${s.failed ? "✖" : DOT[s.dir]} <b>${tf}</b> ${s.dir} ${ago(s.candle_close)} · ${s.failed ? "failed at" : s.dir === "bullish" ? "fails below" : "fails above"} ${fmt(s.sweep, dec)} · ${q.length ? "qualified (" + q.map(x => HTF_LABEL[x]).join(", ") + ")" : "unqualified"}`);
+  }
+  lines.push("", parts.length ? "<b>Intraday</b>\n" + parts.join("\n") : "<i>No intraday signals yet.</i>");
+  return lines.join("\n");
+}
+
+function ago(iso) {
+  if (!iso) return "";
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h${m % 60 ? " " + (m % 60) + "m" : ""} ago` : Math.floor(h / 24) + "d ago";
 }
 
 // ── Telegram ───────────────────────────────────────────────────────────────
