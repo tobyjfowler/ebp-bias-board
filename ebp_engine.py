@@ -105,6 +105,9 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
     if df.empty:
         raise RuntimeError("Databento returned no rows")
     df = df.reset_index()
+    print(f"databento columns: {list(df.columns)}", file=sys.stderr)
+    if "symbol" in df.columns:
+        print(f"databento symbols: {sorted(df['symbol'].astype(str).unique())[:40]}", file=sys.stderr)
     ts = pd.to_datetime(df["ts_event"], utc=True)
     df["trade_date"] = (ts.dt.tz_convert(NY) + pd.Timedelta(hours=6)).dt.normalize().dt.tz_localize(None)
     df["hour_ny"] = ts.dt.tz_convert(NY).dt.hour
