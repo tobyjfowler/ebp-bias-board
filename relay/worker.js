@@ -63,8 +63,14 @@ export default {
 
       // Manual test: {"event":"test","secret":"…"} → sends a Telegram message, stores nothing
       if (event === "test") {
-        const ok = await sendTelegram(env, "✅ EBP relay connected. Qualified intraday signals will arrive here.");
-        return json({ ok, telegram: ok ? "sent" : "not configured or failed" });
+        const diag = {
+          has_bot_token: Boolean(env.TELEGRAM_BOT_TOKEN),
+          bot_token_looks_right: /^\d+:[A-Za-z0-9_-]{20,}$/.test(String(env.TELEGRAM_BOT_TOKEN || "").trim()),
+          has_chat_id: Boolean(env.TELEGRAM_CHAT_ID),
+          chat_id_is_number: /^-?\d+$/.test(String(env.TELEGRAM_CHAT_ID || "").trim()),
+        };
+        const result = await sendTelegram(env, "✅ EBP relay connected. Qualified intraday signals will arrive here.", true);
+        return json({ ok: result === true, telegram: result, diag });
       }
 
       const asset = String(body.asset || "").toUpperCase();
@@ -157,17 +163,23 @@ async function qualifiedBy(asset, dir) {
 }
 
 // ── Telegram ───────────────────────────────────────────────────────────────
-async function sendTelegram(env, text) {
-  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return false;
+async function sendTelegram(env, text, verbose = false) {
+  const token = String(env.TELEGRAM_BOT_TOKEN || "").trim();
+  const chatId = String(env.TELEGRAM_CHAT_ID || "").trim();
+  if (!token || !chatId) return verbose ? "not configured" : false;
   try {
-    const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text, parse_mode: "HTML", disable_web_page_preview: true }),
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
     });
-    return r.ok;
-  } catch {
-    return false;
+    if (r.ok) return true;
+    if (!verbose) return false;
+    let detail = "";
+    try { detail = (await r.json()).description || ""; } catch {}
+    return `telegram ${r.status}: ${detail}`;
+  } catch (e) {
+    return verbose ? `request failed: ${e.message}` : false;
   }
 }
 
