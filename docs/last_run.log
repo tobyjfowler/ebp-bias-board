@@ -1,73 +1,125 @@
-databento GLBX.MDP3 available through 2026-10-07 07:35:05.474261+00:00
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+databento GLBX.MDP3 available through 2026-10-07 13:23:33.073128+00:00
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:163: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-10-06 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
   data = client.timeseries.get_range(
-  NQ.c.0 2024-01-01..2025-01-01: 5892 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  NQ.c.0 2026-10-03..2026-10-07: 62 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:163: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-10-06 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
   data = client.timeseries.get_range(
-  NQ.c.0 2025-01-01..2026-01-01: 5852 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  ES.c.0 2026-10-03..2026-10-07: 62 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:163: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-10-06 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
   data = client.timeseries.get_range(
-  NQ.c.0 2026-01-01..2026-10-07: 4510 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  YM.c.0 2026-10-03..2026-10-07: 62 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:163: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-10-06 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
   data = client.timeseries.get_range(
-  ES.c.0 2024-01-01..2025-01-01: 5892 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  RTY.c.0 2026-10-03..2026-10-07: 62 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:163: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-10-06 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
   data = client.timeseries.get_range(
-  ES.c.0 2025-01-01..2026-01-01: 5852 hourly bars
-  ES.c.0 2026-01-01..2026-10-07 attempt 1 failed: 504 The remote gateway timed out.; retry in 5s
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  GC.n.0 2026-10-03..2026-10-07: 62 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:163: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-10-06 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
   data = client.timeseries.get_range(
-  ES.c.0 2026-01-01..2026-10-07: 4510 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  YM.c.0 2024-01-01..2025-01-01: 5892 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  YM.c.0 2025-01-01..2026-01-01: 5852 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  YM.c.0 2026-01-01..2026-10-07: 4509 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  RTY.c.0 2024-01-01..2025-01-01: 5892 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  RTY.c.0 2025-01-01..2026-01-01: 5852 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  RTY.c.0 2026-01-01..2026-10-07: 4509 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  GC.n.0 2024-01-01..2025-01-01: 5938 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  GC.n.0 2025-01-01..2026-01-01: 5903 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  GC.n.0 2026-01-01..2026-10-07: 4525 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  CL.c.0 2024-01-01..2025-01-01: 5863 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  CL.c.0 2025-01-01..2026-01-01: 5828 hourly bars
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  CL.c.0 2026-01-01..2026-10-07: 4478 hourly bars
+  CL.c.0 2026-10-03..2026-10-07: 62 hourly bars
 databento columns: ['ts_event', 'rtype', 'publisher_id', 'instrument_id', 'open', 'high', 'low', 'close', 'volume', 'symbol', 'req_symbol']
 databento symbols: ['CL.c.0', 'ES.c.0', 'GC.n.0', 'NQ.c.0', 'RTY.c.0', 'YM.c.0']
-  NQ: settlement needed for 7 dates, fetched 0 of 0 new
-  ES: settlement needed for 7 dates, fetched 0 of 0 new
-  YM: settlement needed for 7 dates, fetched 0 of 0 new
-  RTY: settlement needed for 7 dates, fetched 0 of 0 new
-/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:161: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-10-06 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
-  data = client.timeseries.get_range(
-  GC: settlement needed for 8 dates, fetched 8 of 8 new
-  CL: settlement needed for 8 dates, fetched 0 of 0 new
+  NQ.c.0 2026-10-07..2026-10-07 attempt 1 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 5s
+  NQ.c.0 2026-10-07..2026-10-07 attempt 2 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 10s
+  NQ.c.0 2026-10-07..2026-10-07 attempt 3 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 15s
+  NQ.c.0 2026-10-07..2026-10-07 attempt 4 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 20s
+  settlement NQ.c.0 2026-10-07: NQ.c.0: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets
+  NQ: settlement needed for 8 dates, fetched 0 of 1 new
+  ES.c.0 2026-10-07..2026-10-07 attempt 1 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 5s
+  ES.c.0 2026-10-07..2026-10-07 attempt 2 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 10s
+  ES.c.0 2026-10-07..2026-10-07 attempt 3 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 15s
+  ES.c.0 2026-10-07..2026-10-07 attempt 4 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 20s
+  settlement ES.c.0 2026-10-07: ES.c.0: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets
+  ES: settlement needed for 8 dates, fetched 0 of 1 new
+  YM.c.0 2026-10-07..2026-10-07 attempt 1 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 5s
+  YM.c.0 2026-10-07..2026-10-07 attempt 2 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 10s
+  YM.c.0 2026-10-07..2026-10-07 attempt 3 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 15s
+  YM.c.0 2026-10-07..2026-10-07 attempt 4 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 20s
+  settlement YM.c.0 2026-10-07: YM.c.0: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets
+  YM: settlement needed for 8 dates, fetched 0 of 1 new
+  RTY.c.0 2026-10-07..2026-10-07 attempt 1 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 5s
+  RTY.c.0 2026-10-07..2026-10-07 attempt 2 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 10s
+  RTY.c.0 2026-10-07..2026-10-07 attempt 3 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 15s
+  RTY.c.0 2026-10-07..2026-10-07 attempt 4 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 20s
+  settlement RTY.c.0 2026-10-07: RTY.c.0: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets
+  RTY: settlement needed for 8 dates, fetched 0 of 1 new
+  GC.n.0 2026-10-07..2026-10-07 attempt 1 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 5s
+  GC.n.0 2026-10-07..2026-10-07 attempt 2 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 10s
+  GC.n.0 2026-10-07..2026-10-07 attempt 3 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 15s
+  GC.n.0 2026-10-07..2026-10-07 attempt 4 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 20s
+  settlement GC.n.0 2026-10-07: GC.n.0: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets
+  GC: settlement needed for 8 dates, fetched 0 of 1 new
+  CL.c.0 2026-10-07..2026-10-07 attempt 1 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 5s
+  CL.c.0 2026-10-07..2026-10-07 attempt 2 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 10s
+  CL.c.0 2026-10-07..2026-10-07 attempt 3 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 15s
+  CL.c.0 2026-10-07..2026-10-07 attempt 4 failed: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets; retry in 20s
+  settlement CL.c.0 2026-10-07: CL.c.0: 422 data_end_after_available_end
+The dataset GLBX.MDP3 has data available up to '2026-10-07 21:20:00+00:00'. The `end` in the query ('2026-10-07 21:30:00+00:00') is after the available range. Try requesting with an earlier `end`.
+documentation: https://databento.com/docs/api-reference-historical/basics/datasets
+  CL: settlement needed for 8 dates, fetched 0 of 1 new
 NQ   mixed    D:neut  3D:neut  W:neut  M:neut
 ES   mixed    D:neut  3D:neut  W:bull  M:bull
 YM   mixed    D:neut  3D:neut  W:neut  M:neut
-RTY  mixed    D:bear  3D:neut  W:neut  M:neut
-GC   mixed    D:bull  3D:neut  W:neut  M:neut
-CL   mixed    D:neut  3D:neut  W:neut  M:neut
+RTY  mixed    D:neut  3D:neut  W:neut  M:neut
+GC   mixed    D:neut  3D:neut  W:neut  M:neut
+CL   mixed    D:neut  3D:bull  W:neut  M:neut
 wrote docs/data.json (6 assets, 0 errors)
+telegram: 200
