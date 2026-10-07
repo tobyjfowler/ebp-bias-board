@@ -2,11 +2,11 @@ name: Refresh EBP bias board
 
 on:
   schedule:
-    # 17:20 New York daily close = 21:20 UTC (EDT) / 22:20 UTC (EST). Run both; the engine handles either.
-    - cron: "25 21 * * 1-5"
-    - cron: "25 22 * * 1-5"
-    # Sunday evening after the Globex open, so Monday shows fresh data
-    - cron: "30 23 * * 0"
+    # After the 17:00 New York close. Two runs cover EDT/EST and give the data time to land.
+    - cron: "40 21 * * 1-5"   # 17:40 EDT / 16:40 EST
+    - cron: "40 22 * * 1-5"   # 18:40 EDT / 17:40 EST
+    - cron: "10 3 * * 2-6"    # late-night catch-up in case the close bar arrived late
+    - cron: "30 23 * * 0"     # Sunday evening after the Globex open
   workflow_dispatch:
 
 permissions:
@@ -26,10 +26,12 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - name: Build data.json
-        run: python ebp_engine.py --out docs/data.json --raw-dir docs/raw
+        env:
+          DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
+        run: python ebp_engine.py --source databento --history-dir docs/history --out docs/data.json --raw-dir docs/raw
       - name: Commit if changed
         run: |
           git config user.name "ebp-bot"
           git config user.email "ebp-bot@users.noreply.github.com"
-          git add docs/data.json docs/raw
+          git add docs/data.json docs/raw docs/history
           git diff --cached --quiet && echo "no change" || git commit -m "refresh $(date -u +%F)" && git push

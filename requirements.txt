@@ -1,2 +1,3 @@
 pandas>=2.0
 yfinance>=0.2.40
+databento>=0.40

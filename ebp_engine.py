@@ -68,6 +68,73 @@ def load_yahoo(symbol: str, years: int = 3) -> pd.DataFrame:
     return df.dropna()
 
 
+def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, backfill_from: str = "2023-01-01") -> dict[str, pd.DataFrame]:
+    """
+    Daily session bars (18:00-17:00 New York) built from Databento hourly bars for the
+    continuous front-month contracts (NQ.c.0 etc, calendar roll at expiry, unadjusted).
+    Keeps a per-asset CSV cache in history_dir so each run only fetches recent days.
+    """
+    import databento as db
+
+    client = db.Historical(api_key)
+    rng = client.metadata.get_dataset_range("GLBX.MDP3")
+    avail_end = pd.Timestamp(rng["end"]).tz_convert("UTC") if pd.Timestamp(rng["end"]).tzinfo else pd.Timestamp(rng["end"]).tz_localize("UTC")
+    now_utc = pd.Timestamp.now(tz="UTC")
+    end = min(avail_end, now_utc)
+    print(f"databento GLBX.MDP3 available through {avail_end}", file=sys.stderr)
+
+    cache: dict[str, pd.DataFrame] = {}
+    start = pd.Timestamp(backfill_from, tz="UTC")
+    if history_dir:
+        history_dir.mkdir(parents=True, exist_ok=True)
+        for k in keys:
+            f = history_dir / f"{k}.csv"
+            if f.exists():
+                cache[k] = pd.read_csv(f, parse_dates=["date"]).set_index("date")
+        if len(cache) == len(keys):
+            last = min(df.index.max() for df in cache.values())
+            # refetch the last few sessions so any partial day is rebuilt
+            start = (pd.Timestamp(last) - pd.Timedelta(days=4)).tz_localize("UTC")
+
+    symbols = [f"{k}.c.0" for k in keys]
+    data = client.timeseries.get_range(
+        dataset="GLBX.MDP3", symbols=symbols, stype_in="continuous",
+        schema="ohlcv-1h", start=start, end=end,
+    )
+    df = data.to_df()
+    if df.empty:
+        raise RuntimeError("Databento returned no rows")
+    df = df.reset_index()
+    ts = pd.to_datetime(df["ts_event"], utc=True)
+    df["trade_date"] = (ts.dt.tz_convert(NY) + pd.Timedelta(hours=6)).dt.normalize().dt.tz_localize(None)
+    df["hour_ny"] = ts.dt.tz_convert(NY).dt.hour
+
+    out: dict[str, pd.DataFrame] = {}
+    for k in keys:
+        # symbol may come back as the continuous name (NQ.c.0) or the raw contract (NQZ6)
+        pat = rf"^{k}(\.c\.0|[FGHJKMNQUVXZ]\d{{1,2}})$"
+        part = df[df["symbol"].astype(str).str.upper().str.match(pat)]
+        if part.empty:
+            raise RuntimeError(f"{k}: no rows from Databento (symbol {k}.c.0)")
+        # The 17:00-18:00 hour is the maintenance break; any bar there belongs to the closed session
+        g = part.groupby("trade_date")
+        daily = pd.DataFrame({
+            "open": g["open"].first(), "high": g["high"].max(),
+            "low": g["low"].min(), "close": g["close"].last(),
+        })
+        daily.index.name = "date"
+        daily = daily[daily.index.weekday < 5]
+        if k in cache:
+            merged = pd.concat([cache[k][~cache[k].index.isin(daily.index)], daily]).sort_index()
+        else:
+            merged = daily.sort_index()
+        merged = merged[~merged.index.duplicated(keep="last")]
+        if history_dir:
+            merged.to_csv(history_dir / f"{k}.csv")
+        out[k] = merged
+    return out
+
+
 def load_tradingview_csv(path: Path) -> pd.DataFrame:
     """TradingView 'Export chart data' CSV: time (unix seconds or ISO), open, high, low, close, ..."""
     df = pd.read_csv(path)
@@ -281,12 +348,26 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("docs/data.json"))
     ap.add_argument("--now", help="Override 'now' (ISO, New York time) for testing")
     ap.add_argument("--raw-dir", type=Path, help="Also save the daily bars used, one CSV per asset")
+    ap.add_argument("--source", choices=["yahoo", "databento"], default="yahoo")
+    ap.add_argument("--history-dir", type=Path, default=Path("docs/history"), help="Databento mode: per-asset daily cache")
     args = ap.parse_args()
 
     now_ny = datetime.fromisoformat(args.now).replace(tzinfo=NY) if args.now else datetime.now(NY)
 
     assets_out = []
     errors = []
+    dbdata: dict[str, pd.DataFrame] = {}
+    if args.source == "databento" and not args.csv_dir:
+        import os
+        api_key = os.environ.get("DATABENTO_API_KEY", "")
+        if not api_key:
+            print("DATABENTO_API_KEY not set", file=sys.stderr)
+            return 1
+        try:
+            dbdata = load_databento_all([a[0] for a in ASSETS], args.history_dir, api_key)
+        except Exception as e:  # noqa: BLE001
+            print(f"databento: ERROR {e}", file=sys.stderr)
+            errors.append(f"databento: {e}")
     for key, name, ysym, tvsym, dec in ASSETS:
         try:
             if args.csv_dir:
@@ -296,6 +377,11 @@ def main() -> int:
                     continue
                 daily = load_tradingview_csv(p)
                 source = f"tradingview-csv:{p.name}"
+            elif args.source == "databento":
+                if key not in dbdata:
+                    raise RuntimeError("no Databento data")
+                daily = dbdata[key]
+                source = f"databento:{key}.c.0"
             else:
                 daily = load_yahoo(ysym)
                 source = f"yahoo:{ysym}"
