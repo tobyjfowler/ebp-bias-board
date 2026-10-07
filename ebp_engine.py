@@ -47,6 +47,17 @@ ASSETS = [
     ("CL",  "Crude Oil",    "CL=F",  "NYMEX:CL1!",     2),
 ]
 
+# Databento continuous-contract roll rule per asset: c = calendar (nearest expiry), n = open interest,
+# v = volume. Equity indices and crude track the nearest expiry like TradingView's 1! symbols;
+# gold's nearest expiry is a thin off-cycle month, so TradingView's GC1! follows the open-interest leader.
+ROLL_RULE = {"GC": "n"}
+DEFAULT_ROLL = "c"
+
+
+def cont_symbol(key: str) -> str:
+    return f"{key}.{ROLL_RULE.get(key, DEFAULT_ROLL)}.0"
+
+
 TIMEFRAMES = ["D", "3D", "W", "M"]
 TF_LABELS = {"D": "Daily", "3D": "3-Day", "W": "Weekly", "M": "Monthly"}
 
@@ -166,8 +177,8 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
         s0 = start
         while s0 < end:
             s1 = min(end, pd.Timestamp(year=s0.year + 1, month=1, day=1, tz="UTC"))
-            d = fetch(f"{k}.c.0", s0, s1)
-            print(f"  {k}.c.0 {s0.date()}..{s1.date()}: {len(d)} hourly bars", file=sys.stderr)
+            d = fetch(cont_symbol(k), s0, s1)
+            print(f"  {cont_symbol(k)} {s0.date()}..{s1.date()}: {len(d)} hourly bars", file=sys.stderr)
             chunks.append(d)
             s0 = s1
     df = pd.concat(chunks, ignore_index=True)
@@ -182,9 +193,9 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
 
     out: dict[str, pd.DataFrame] = {}
     for k in keys:
-        part = df[df["req_symbol"] == f"{k}.c.0"]
+        part = df[df["req_symbol"] == cont_symbol(k)]
         if part.empty:
-            raise RuntimeError(f"{k}: no rows from Databento (symbol {k}.c.0)")
+            raise RuntimeError(f"{k}: no rows from Databento (symbol {cont_symbol(k)})")
         # The 17:00-18:00 hour is the maintenance break; any bar there belongs to the closed session
         g = part.groupby("trade_date")
         daily = pd.DataFrame({
@@ -212,7 +223,7 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
         todo = [d for d in needed if d in merged.index and pd.isna(merged.loc[d, "settle"])]
         got = 0
         for d in todo:
-            px = fetch_settlement(fetch, f"{k}.c.0", d)
+            px = fetch_settlement(fetch, cont_symbol(k), d)
             if px is not None:
                 merged.loc[d, "settle"] = px
                 got += 1
@@ -514,7 +525,7 @@ def main() -> int:
                 if key not in dbdata:
                     raise RuntimeError("no Databento data")
                 daily = dbdata[key]
-                source = f"databento:{key}.c.0"
+                source = f"databento:{cont_symbol(key)}"
             else:
                 daily = load_yahoo(ysym)
                 source = f"yahoo:{ysym}"
