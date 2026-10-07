@@ -1,0 +1,35 @@
+name: Refresh EBP bias board
+
+on:
+  schedule:
+    # 17:20 New York daily close = 21:20 UTC (EDT) / 22:20 UTC (EST). Run both; the engine handles either.
+    - cron: "25 21 * * 1-5"
+    - cron: "25 22 * * 1-5"
+    # Sunday evening after the Globex open, so Monday shows fresh data
+    - cron: "30 23 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Build data.json
+        run: python ebp_engine.py --out docs/data.json
+      - name: Commit if changed
+        run: |
+          git config user.name "ebp-bot"
+          git config user.email "ebp-bot@users.noreply.github.com"
+          git add docs/data.json
+          git diff --cached --quiet && echo "no change" || git commit -m "refresh $(date -u +%F)" && git push

@@ -1,0 +1,112 @@
+{
+  "generated_at": "2026-10-07T12:45:26.756553+00:00",
+  "generated_at_ny": "2026-10-07T08:45:26.501929-04:00",
+  "timeframes": [
+    "D",
+    "3D",
+    "W",
+    "M"
+  ],
+  "timeframe_labels": {
+    "D": "Daily",
+    "3D": "3-Day",
+    "W": "Weekly",
+    "M": "Monthly"
+  },
+  "assets": [
+    {
+      "price": 31259.0,
+      "price_as_of": "2026-10-07T08:45:26.501929-04:00",
+      "last_daily_bar": "2026-10-07",
+      "last_daily_closed": false,
+      "timeframes": {
+        "D": {
+          "label": "Daily",
+          "bias": "neutral",
+          "candle_start": "2026-10-06",
+          "candle_end": "2026-10-06",
+          "open": 31346.75,
+          "high": 31616.5,
+          "low": 31309.25,
+          "close": 31483.25,
+          "prior_open": 31059.0,
+          "prior_high": 31371.0,
+          "prior_low": 30957.5,
+          "invalidation": null,
+          "intact": null,
+          "forming_bias": "neutral",
+          "forming_start": "2026-10-07",
+          "next_close": "2026-10-07T17:00:00-04:00"
+        },
+        "3D": {
+          "label": "3-Day",
+          "bias": "neutral",
+          "candle_start": "2026-10-02",
+          "candle_end": "2026-10-06",
+          "open": 30771.25,
+          "high": 31616.5,
+          "low": 30760.25,
+          "close": 31483.25,
+          "prior_open": 30560.5,
+          "prior_high": 31151.5,
+          "prior_low": 30372.25,
+          "invalidation": null,
+          "intact": null,
+          "forming_bias": "neutral",
+          "forming_start": "2026-10-07",
+          "next_close": "2026-10-09T17:00:00-04:00"
+        },
+        "W": {
+          "label": "Weekly",
+          "bias": "neutral",
+          "candle_start": "2026-09-28",
+          "candle_end": "2026-10-02",
+          "open": 30870.0,
+          "high": 31282.5,
+          "low": 30356.75,
+          "close": 31061.75,
+          "prior_open": 29938.0,
+          "prior_high": 31094.75,
+          "prior_low": 29904.0,
+          "invalidation": null,
+          "intact": null,
+          "forming_bias": "neutral",
+          "forming_start": "2026-10-05",
+          "next_close": "2026-10-09T17:00:00-04:00"
+        },
+        "M": {
+          "label": "Monthly",
+          "bias": "neutral",
+          "candle_start": "2026-09-01",
+          "candle_end": "2026-09-30",
+          "open": 29815.5,
+          "high": 31094.75,
+          "low": 29053.0,
+          "close": 30698.75,
+          "prior_open": 28862.25,
+          "prior_high": 30640.25,
+          "prior_low": 28610.75,
+          "invalidation": null,
+          "intact": null,
+          "forming_bias": "neutral",
+          "forming_start": "2026-10-01",
+          "next_close": "2026-10-30T17:00:00-04:00"
+        }
+      },
+      "alignment": {
+        "bullish": 0,
+        "bearish": 0,
+        "net": 0,
+        "summary": "mixed"
+      },
+      "key": "NQ",
+      "name": "Nasdaq 100",
+      "tv_symbol": "CME_MINI:NQ1!",
+      "source": "tradingview-csv:NQ.csv"
+    }
+  ],
+  "errors": [
+    "ES, YM, RTY, GC, CL not connected yet (daily feed goes live with the GitHub setup)"
+  ],
+  "sample": false
+}
