@@ -1,0 +1,25 @@
+name: Databento diagnostic
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - env:
+          DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
+        run: python diag.py 2>&1 | tee docs/diag.log
+      - if: always()
+        run: |
+          git config user.name "ebp-bot"
+          git config user.email "ebp-bot@users.noreply.github.com"
+          git pull -q --rebase || true
+          git add docs/diag.log
+          git diff --cached --quiet || (git commit -m "diag" && git push)
