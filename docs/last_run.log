@@ -1,9 +1,64 @@
-databento GLBX.MDP3 available through 2026-10-07 05:31:55.229102+00:00
-databento: ERROR 504 The remote gateway timed out.
-NQ: ERROR no Databento data
-ES: ERROR no Databento data
-YM: ERROR no Databento data
-RTY: ERROR no Databento data
-GC: ERROR no Databento data
-CL: ERROR no Databento data
-wrote docs/data.json (0 assets, 7 errors)
+databento GLBX.MDP3 available through 2026-10-07 05:35:45.258776+00:00
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  NQ.c.0 2024-01-01..2025-01-01: 5892 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  NQ.c.0 2025-01-01..2026-01-01: 5852 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  NQ.c.0 2026-01-01..2026-10-07: 4508 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  ES.c.0 2024-01-01..2025-01-01: 5892 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  ES.c.0 2025-01-01..2026-01-01: 5852 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  ES.c.0 2026-01-01..2026-10-07: 4508 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  YM.c.0 2024-01-01..2025-01-01: 5892 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  YM.c.0 2025-01-01..2026-01-01: 5852 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  YM.c.0 2026-01-01..2026-10-07: 4507 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  RTY.c.0 2024-01-01..2025-01-01: 5892 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  RTY.c.0 2025-01-01..2026-01-01: 5852 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  RTY.c.0 2026-01-01..2026-10-07: 4507 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  GC.c.0 2024-01-01..2025-01-01: 1879 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  GC.c.0 2025-01-01..2026-01-01: 2782 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  GC.c.0 2026-01-01..2026-10-07: 1437 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2024-09-18 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  CL.c.0 2024-01-01..2025-01-01: 5863 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2025-09-17 (degraded), 2025-09-24 (degraded), 2025-11-28 (degraded). See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  CL.c.0 2025-01-01..2026-01-01: 5828 hourly bars
+/home/runner/work/ebp-bias-board/ebp-bias-board/ebp_engine.py:105: BentoWarning: The streaming request contained one or more days which have reduced quality: 2026-01-31 (degraded), 2026-03-15 (degraded), 2026-03-16 (degraded)... See: https://databento.com/docs/api-reference-historical/metadata/metadata-get-dataset-condition
+  data = client.timeseries.get_range(
+  CL.c.0 2026-01-01..2026-10-07: 4476 hourly bars
+databento columns: ['ts_event', 'rtype', 'publisher_id', 'instrument_id', 'open', 'high', 'low', 'close', 'volume', 'symbol', 'req_symbol']
+databento symbols: ['CL.c.0', 'ES.c.0', 'GC.c.0', 'NQ.c.0', 'RTY.c.0', 'YM.c.0']
+NQ   mixed    D:neut  3D:neut  W:neut  M:neut
+ES   mixed    D:neut  3D:neut  W:bull  M:bull
+YM   mixed    D:neut  3D:neut  W:neut  M:neut
+RTY  mixed    D:bear  3D:neut  W:neut  M:neut
+GC   mixed    D:bull  3D:neut  W:neut  M:neut
+CL   mixed    D:neut  3D:neut  W:neut  M:neut
+wrote docs/data.json (6 assets, 0 errors)
