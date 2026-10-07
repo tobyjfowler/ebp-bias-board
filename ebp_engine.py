@@ -68,7 +68,7 @@ def load_yahoo(symbol: str, years: int = 3) -> pd.DataFrame:
     return df.dropna()
 
 
-def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, backfill_from: str = "2023-01-01") -> dict[str, pd.DataFrame]:
+def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, backfill_from: str = "2024-01-01") -> dict[str, pd.DataFrame]:
     """
     Daily session bars (18:00-17:00 New York) built from Databento hourly bars for the
     continuous front-month contracts (NQ.c.0 etc, calendar roll at expiry, unadjusted).
@@ -96,15 +96,38 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
             # refetch the last few sessions so any partial day is rebuilt
             start = (pd.Timestamp(last) - pd.Timedelta(days=4)).tz_localize("UTC")
 
-    symbols = [f"{k}.c.0" for k in keys]
-    data = client.timeseries.get_range(
-        dataset="GLBX.MDP3", symbols=symbols, stype_in="continuous",
-        schema="ohlcv-1h", start=start, end=end,
-    )
-    df = data.to_df()
+    import time as _time
+
+    def fetch(symbol: str, s0: pd.Timestamp, s1: pd.Timestamp) -> pd.DataFrame:
+        last_err: Exception | None = None
+        for attempt in range(4):
+            try:
+                data = client.timeseries.get_range(
+                    dataset="GLBX.MDP3", symbols=[symbol], stype_in="continuous",
+                    schema="ohlcv-1h", start=s0, end=s1,
+                )
+                d = data.to_df().reset_index()
+                d["req_symbol"] = symbol
+                return d
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                wait = 5 * (attempt + 1)
+                print(f"  {symbol} {s0.date()}..{s1.date()} attempt {attempt + 1} failed: {e}; retry in {wait}s", file=sys.stderr)
+                _time.sleep(wait)
+        raise RuntimeError(f"{symbol}: {last_err}")
+
+    chunks: list[pd.DataFrame] = []
+    for k in keys:
+        s0 = start
+        while s0 < end:
+            s1 = min(end, pd.Timestamp(year=s0.year + 1, month=1, day=1, tz="UTC"))
+            d = fetch(f"{k}.c.0", s0, s1)
+            print(f"  {k}.c.0 {s0.date()}..{s1.date()}: {len(d)} hourly bars", file=sys.stderr)
+            chunks.append(d)
+            s0 = s1
+    df = pd.concat(chunks, ignore_index=True)
     if df.empty:
         raise RuntimeError("Databento returned no rows")
-    df = df.reset_index()
     print(f"databento columns: {list(df.columns)}", file=sys.stderr)
     if "symbol" in df.columns:
         print(f"databento symbols: {sorted(df['symbol'].astype(str).unique())[:40]}", file=sys.stderr)
@@ -114,9 +137,7 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
 
     out: dict[str, pd.DataFrame] = {}
     for k in keys:
-        # symbol may come back as the continuous name (NQ.c.0) or the raw contract (NQZ6)
-        pat = rf"^{k}(\.c\.0|[FGHJKMNQUVXZ]\d{{1,2}})$"
-        part = df[df["symbol"].astype(str).str.upper().str.match(pat)]
+        part = df[df["req_symbol"] == f"{k}.c.0"]
         if part.empty:
             raise RuntimeError(f"{k}: no rows from Databento (symbol {k}.c.0)")
         # The 17:00-18:00 hour is the maintenance break; any bar there belongs to the closed session
