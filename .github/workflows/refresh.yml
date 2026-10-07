@@ -1,12 +1,8 @@
 name: Refresh EBP bias board
 
 on:
-  schedule:
-    # After the 17:00 New York close. Two runs cover EDT/EST and give the data time to land.
-    - cron: "40 21 * * 1-5"   # 17:40 EDT / 16:40 EST
-    - cron: "40 22 * * 1-5"   # 18:40 EDT / 17:40 EST
-    - cron: "10 3 * * 2-6"    # late-night catch-up in case the close bar arrived late
-    - cron: "30 23 * * 0"     # Sunday evening after the Globex open
+  # Scheduled runs retired: the board's higher-timeframe biases now come from TradingView via the relay.
+  # Keep manual runs as an audit tool (compares Databento-built candles with the chart).
   workflow_dispatch:
     inputs:
       force_summary:
@@ -39,12 +35,6 @@ jobs:
           set -o pipefail
           git show HEAD:docs/data.json > /tmp/previous.json 2>/dev/null || true
           python ebp_engine.py --source databento --history-dir docs/history --out docs/data.json --raw-dir docs/raw 2>&1 | tee docs/last_run.log
-      - name: Telegram summary (only when biases changed)
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FORCE_SUMMARY: ${{ inputs.force_summary }}
-        run: python telegram_summary.py docs/data.json /tmp/previous.json 2>&1 | tee -a docs/last_run.log
       - name: Commit if changed
         if: always()
         run: |

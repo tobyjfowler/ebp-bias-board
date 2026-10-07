@@ -56,6 +56,8 @@
   .asset .sym { font-size: 18px; font-weight: 700; }
   .asset .name { font-size: 12px; color: var(--muted); }
   .asset .px { font-family: var(--mono); font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .asset .asof { font-size: 11px; color: var(--muted); }
+  .asset .asof.stale { color: var(--warn); }
   .align { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
   .align .dots { display: inline-flex; gap: 2px; }
   .align .dots i { width: 7px; height: 7px; border-radius: 2px; background: var(--neutral); display: inline-block; }
@@ -149,7 +151,7 @@
 
   <footer>
     <p>Each cell is the last closed candle on that timeframe. Bullish: it swept the prior candle's low and closed above the prior open. Bearish: it swept the prior high and closed below the prior open. The level shown is the sweep extreme, which is where the pattern fails.</p>
-    <p>Daily candles run 18:00 to 17:00 New York. 3-day candles are counted in threes from the first trading day of each year, matching TradingView.</p>
+    <p>Higher-timeframe cells are sent from TradingView at each daily close (17:00 New York): daily candles run 18:00 to 17:00, weeks Monday to Friday, calendar months, and 3-day candles counted in threes from the first trading day of each year.</p>
     <p>Intraday row: the latest 6H, 4H and 1H EBP per asset, sent live from TradingView. A signal is <b>qualified</b> when at least one higher timeframe has an intact EBP in the same direction; otherwise it is shown faded and no alert is sent.</p>
   </footer>
 </div>
@@ -190,7 +192,7 @@
       forming = ` · forming <span class="forming ${t.forming_bias}">${t.forming_bias}</span>`;
     }
     const range = t.candle_start === t.candle_end ? fmtDay(t.candle_end) : `${fmtDay(t.candle_start)}–${fmtDay(t.candle_end)}`;
-    const next = t.next_close ? `next ${fmtDate(t.next_close)}` : "";
+    const next = t.next_close ? `next ${fmtDate(t.next_close)}` : (t.forming_start ? `forming from ${fmtDay(t.forming_start)}` : "");
     return `<div class="cell"><span class="tf">${TF_SHORT[tf]}</span>${pill}${lvl}<span class="sub">${range}${forming}<br>${next}</span></div>`;
   }
 
@@ -237,20 +239,56 @@
     }
   }
 
+  let fileData = null;
+
   function loadRelay() {
-    if (!RELAY_URL) return;
-    fetch(RELAY_URL.replace(/\/$/, "") + "/signals", { cache: "no-store" })
+    if (!RELAY_URL) return Promise.resolve();
+    return fetch(RELAY_URL.replace(/\/$/, "") + "/signals", { cache: "no-store" })
       .then(r => r.json())
-      .then(d => { relayData = d; renderIntraday(); })
-      .catch(() => { relayData = null; renderIntraday(); });
+      .then(d => { relayData = d; })
+      .catch(() => { relayData = null; });
+  }
+
+  function renderAll() {
+    render(mergeSources(fileData, relayData));
+  }
+
+  // Build the asset list the board renders: relay HTF updates first, nightly file as fallback
+  function mergeSources(fileData, relay) {
+    const htf = (relay && relay.htf) || {};
+    const keys = ["NQ", "ES", "YM", "RTY", "GC", "CL"];
+    const names = { NQ: "Nasdaq 100", ES: "S&P 500", YM: "Dow Jones", RTY: "Russell 2000", GC: "Gold", CL: "Crude Oil" };
+    const fileAssets = {};
+    for (const a of (fileData && fileData.assets) || []) fileAssets[a.key] = a;
+    const assets = [];
+    let newest = null;
+    for (const key of keys) {
+      const h = htf[key];
+      if (h) {
+        const tfs = {};
+        for (const tf of TF_ORDER) tfs[tf] = { ...h.timeframes[tf], invalidation: h.timeframes[tf].sweep, next_close: null };
+        const biases = TF_ORDER.map(tf => tfs[tf]).filter(t => t.bias !== "neutral" && t.intact !== false).map(t => t.bias);
+        const bull = biases.filter(b => b === "bullish").length, bear = biases.filter(b => b === "bearish").length;
+        assets.push({
+          key, name: names[key], price: h.price, last_daily_closed: h.reason === "close", source: "tradingview",
+          trade_date: h.trade_date, received_at: h.received_at, timeframes: tfs,
+          alignment: { bullish: bull, bearish: bear, net: bull - bear, summary: bull >= 3 ? "bullish" : bear >= 3 ? "bearish" : "mixed" },
+        });
+        if (!newest || h.received_at > newest) newest = h.received_at;
+      } else if (fileAssets[key]) {
+        assets.push({ ...fileAssets[key], source: "nightly" });
+      }
+    }
+    return { assets, newest, errors: (fileData && fileData.errors) || [], sample: !!(fileData && fileData.sample) && !Object.keys(htf).length };
   }
 
   function render(data) {
     htfData = data;
     document.getElementById("banner").hidden = !data.sample;
-    document.getElementById("gen").textContent = "updated " + fmtDate(data.generated_at);
+    document.getElementById("gen").textContent = data.newest ? "updated " + fmtDate(data.newest) : "waiting for first update";
     const board = document.getElementById("board");
     let html = `<div class="head">Asset</div>` + TF_ORDER.map(tf => `<div class="head tfhead">${TF_SHORT[tf]}</div>`).join("");
+    const latestTradeDate = data.assets.map(a => a.trade_date).filter(Boolean).sort().pop() || "";
     for (const a of data.assets) {
       const dec = decimalsFor(a.key);
       const al = a.alignment || {};
@@ -260,6 +298,7 @@
         <div class="asset">
           <span class="sym">${a.key}</span><span class="name">${a.name}</span>
           <span class="px">${fmtNum(a.price, dec)}${a.last_daily_closed ? "" : " <span style='color:var(--warn)'>live</span>"}</span>
+          ${a.trade_date ? `<span class="sub asof ${a.trade_date < latestTradeDate ? "stale" : ""}">as of ${fmtDay(a.trade_date)} close${a.trade_date < latestTradeDate ? " · no update yet" : ""}</span>` : ""}
           <span class="align ${al.summary}"><span class="dots">${dots}</span>${alignTxt}</span>
         </div>
         <div class="cells">${TF_ORDER.map(tf => cellHtml(tf, a.timeframes[tf], dec)).join("")}</div>
@@ -284,14 +323,14 @@
     try { localStorage.setItem("ebp-hide-unq", tog.checked ? "1" : "0"); } catch (e) {}
   });
 
-  fetch("data.json", { cache: "no-store" })
+  const fileLoad = fetch("data.json", { cache: "no-store" })
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(d => { render(d); loadRelay(); })
-    .catch(err => {
-      document.getElementById("gen").textContent = "Could not load data.json (" + err.message + ")";
-    });
+    .then(d => { fileData = d; })
+    .catch(() => { fileData = null; });
 
-  // Keep the intraday strip fresh while the page is open
-  setInterval(loadRelay, 60000);
+  Promise.all([fileLoad, loadRelay()]).then(renderAll);
+
+  // Keep the board fresh while the page is open
+  setInterval(() => loadRelay().then(renderAll), 60000);
 })();
 </script>

@@ -1,0 +1,257 @@
+//@version=6
+indicator("EBP HTF Webhook (D/3D/W/M)", "EBP HTF", overlay = true, max_labels_count = 50)
+
+// ─────────────────────────────────────────────────────────────
+// One instance per asset, on the DAILY chart. Create ONE alert:
+//   Condition: EBP HTF → "Any alert() function call"
+//   Webhook URL: your relay URL · Notifications: Webhook only
+//
+// At each daily close it sends the D / 3D / W / M EBP bias (last closed candle on each,
+// built from TradingView's own daily bars: weeks Mon–Fri, calendar months, 3-day groups
+// counted from the first trading day of the year) plus the forming candle's bias.
+// If a higher-timeframe candle turns out to have closed early (holiday), a correction is
+// sent when the next session opens. A "htf_fail" is sent live when price trades through
+// an intact HTF EBP's sweep level.
+// ─────────────────────────────────────────────────────────────
+
+grpS          = "Signal rules"
+reqOpp        = input.bool(true, "Require opposite-colour prior candle", group = grpS)
+minSweepTicks = input.int(1, "Minimum sweep (ticks)", minval = 1, group = grpS)
+
+grpW     = "Webhook"
+assetKey = input.string("", "Asset key (NQ, ES, YM, RTY, GC, CL)", group = grpW, tooltip = "Blank = from the chart symbol.")
+secret   = input.string("", "Shared secret", group = grpW)
+
+grpD     = "Display"
+showTbl  = input.bool(true, "Show bias table", group = grpD)
+
+// ─────────────────────────────────────────────────────────────
+// Period bookkeeping
+// ─────────────────────────────────────────────────────────────
+chartOk = timeframe.isdaily and timeframe.multiplier == 1
+tz      = syminfo.timezone
+key     = assetKey != "" ? assetKey : str.replace_all(str.replace_all(syminfo.ticker, "1!", ""), "!", "")
+
+jsonEsc(string s) => str.replace_all(str.replace_all(s, "\\", "\\\\"), "\"", "\\\"")
+dstr(int t) => str.format_time(t, "yyyy-MM-dd", tz)
+
+// trading-day counter within the year (for 3-day groups), counted on confirmed bars
+var int dayCount = 0
+var int lastYear = na
+yearNow = year(time, tz)
+
+weekKey(int t) =>
+    dow = dayofweek(t, tz)
+    off = (dow - dayofweek.monday + 7) % 7
+    mon = t - off * 86400000
+    year(mon, tz) * 1000 + dayofyear(mon, tz)
+
+monthKey(int t) => year(t, tz) * 100 + month(t, tz)
+
+// key for the bar at time t given its (1-based) trading-day count within its year
+threeDayKey(int t, int count) => year(t, tz) * 1000 + math.floor((count - 1) / 3)
+
+monthClosesToday(int t) =>
+    dow = dayofweek(t, tz)
+    nextWeekday = t + (dow == dayofweek.friday ? 3 : dow == dayofweek.saturday ? 2 : 1) * 86400000
+    month(nextWeekday, tz) != month(t, tz)
+
+type Tf
+    string name
+    // in-progress period
+    int   curKey = na
+    float curO = na
+    float curH = na
+    float curL = na
+    float curC = na
+    int   curStart = na
+    int   curEnd = na
+    int   curBars = 0
+    bool  finalized = false
+    // last closed candle and the one before it
+    float lastO = na
+    float lastH = na
+    float lastL = na
+    float lastC = na
+    int   lastStart = na
+    int   lastEnd = na
+    float prevO = na
+    float prevH = na
+    float prevL = na
+    float prevC = na
+    // EBP state of the last closed candle
+    string bias = "neutral"
+    float  sweep = na
+    bool   intact = true
+
+var tfD = Tf.new("D")
+var tf3 = Tf.new("3D")
+var tfW = Tf.new("W")
+var tfM = Tf.new("M")
+
+classify(float cO, float cH, float cL, float cC, float pO, float pH, float pL, float pC) =>
+    if na(pO)
+        "neutral"
+    else
+        bullSweep = math.round((pL - cL) / syminfo.mintick) >= minSweepTicks
+        bearSweep = math.round((cH - pH) / syminfo.mintick) >= minSweepTicks
+        if bullSweep and cC > pO and (not reqOpp or pC < pO)
+            "bullish"
+        else if bearSweep and cC < pO and (not reqOpp or pC > pO)
+            "bearish"
+        else
+            "neutral"
+
+method finalize(Tf s) =>
+    if not s.finalized and s.curBars > 0
+        s.prevO := s.lastO
+        s.prevH := s.lastH
+        s.prevL := s.lastL
+        s.prevC := s.lastC
+        s.lastO := s.curO
+        s.lastH := s.curH
+        s.lastL := s.curL
+        s.lastC := s.curC
+        s.lastStart := s.curStart
+        s.lastEnd := s.curEnd
+        s.bias := classify(s.lastO, s.lastH, s.lastL, s.lastC, s.prevO, s.prevH, s.prevL, s.prevC)
+        s.sweep := s.bias == "bullish" ? s.lastL : s.bias == "bearish" ? s.lastH : na
+        s.intact := true
+        s.finalized := true
+
+method startPeriod(Tf s, int k, int t) =>
+    s.curKey := k
+    s.curO := na
+    s.curH := na
+    s.curL := na
+    s.curC := na
+    s.curStart := t
+    s.curBars := 0
+    s.finalized := false
+
+method absorb(Tf s, float o, float h, float l, float c, int t) =>
+    if s.curBars == 0
+        s.curO := o
+        s.curH := h
+        s.curL := l
+    else
+        s.curH := math.max(s.curH, h)
+        s.curL := math.min(s.curL, l)
+    s.curC := c
+    s.curEnd := t
+    s.curBars += 1
+
+method formingBias(Tf s) =>
+    s.finalized or s.curBars == 0 ? "neutral" : classify(s.curO, s.curH, s.curL, s.curC, s.lastO, s.lastH, s.lastL, s.lastC)
+
+// a period boundary reached without the close having been declared → close it now (holiday edge)
+method rollIfNew(Tf s, int k, int t) =>
+    bool corrected = false
+    if na(s.curKey) or k != s.curKey
+        if not na(s.curKey) and not s.finalized
+            s.finalize()
+            corrected := true
+        s.startPeriod(k, t)
+    corrected
+
+// ─────────────────────────────────────────────────────────────
+// Per-bar logic
+// ─────────────────────────────────────────────────────────────
+// Trading-day count for THIS bar
+countThisBar = (na(lastYear) or yearNow != lastYear) ? 1 : dayCount + 1
+
+kD = int(time / 86400000)
+k3 = threeDayKey(time, countThisBar)
+kW = weekKey(time)
+kM = monthKey(time)
+
+// 1) New bar opened: roll periods; if any HTF closed un-declared, send a correction
+bool corrected = false
+if chartOk and barstate.isnew
+    corrected := tfD.rollIfNew(kD, time) or corrected
+    corrected := tf3.rollIfNew(k3, time) or corrected
+    corrected := tfW.rollIfNew(kW, time) or corrected
+    corrected := tfM.rollIfNew(kM, time) or corrected
+
+// 2) Fail checks on every update, including the live bar
+checkFail(Tf s) =>
+    bool hit = false
+    if s.bias != "neutral" and s.intact and not na(s.sweep) and (s.lastEnd < time)
+        hit := s.bias == "bullish" ? low < s.sweep : high > s.sweep
+        if hit
+            s.intact := false
+    hit
+
+msgFail(string tfName, string b, float sw) =>
+    '{"event":"htf_fail","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
+     '","tf":"' + tfName + '","dir":"' + b + '","sweep":' + str.tostring(sw, format.mintick) + ',"failed_at":' + str.tostring(time) + '}'
+
+if chartOk
+    for s in array.from(tfD, tf3, tfW, tfM)
+        b = s.bias
+        sw = s.sweep
+        if checkFail(s)
+            alert(msgFail(s.name, b, sw), alert.freq_once_per_bar)
+
+// 3) Bar closed: absorb it, declare closes by calendar rule, send the HTF update
+tfJson(Tf s) =>
+    '"' + s.name + '":{"bias":"' + s.bias + '","open":' + str.tostring(s.lastO, format.mintick) + ',"high":' + str.tostring(s.lastH, format.mintick) +
+     ',"low":' + str.tostring(s.lastL, format.mintick) + ',"close":' + str.tostring(s.lastC, format.mintick) +
+     ',"prior_open":' + (na(s.prevO) ? "null" : str.tostring(s.prevO, format.mintick)) +
+     ',"prior_high":' + (na(s.prevH) ? "null" : str.tostring(s.prevH, format.mintick)) +
+     ',"prior_low":' + (na(s.prevL) ? "null" : str.tostring(s.prevL, format.mintick)) +
+     ',"sweep":' + (na(s.sweep) ? "null" : str.tostring(s.sweep, format.mintick)) +
+     ',"intact":' + (s.intact ? "true" : "false") +
+     ',"candle_start":"' + (na(s.lastStart) ? "" : dstr(s.lastStart)) + '","candle_end":"' + (na(s.lastEnd) ? "" : dstr(s.lastEnd)) + '"' +
+     ',"forming_bias":"' + s.formingBias() + '","forming_start":"' + (s.finalized or s.curBars == 0 ? "" : dstr(s.curStart)) + '"}'
+
+msgHtf(string reason) =>
+    '{"event":"htf","reason":"' + reason + '","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
+     '","trade_date":"' + dstr(time) + '","as_of":' + str.tostring(time_close) + ',"bar_time":' + str.tostring(time) + ',"price":' + str.tostring(close, format.mintick) + ',' +
+     tfJson(tfD) + ',' + tfJson(tf3) + ',' + tfJson(tfW) + ',' + tfJson(tfM) + '}'
+
+if chartOk and barstate.isconfirmed
+    // make sure periods exist (first bars of history)
+    tfD.rollIfNew(kD, time)
+    tf3.rollIfNew(k3, time)
+    tfW.rollIfNew(kW, time)
+    tfM.rollIfNew(kM, time)
+    for s in array.from(tfD, tf3, tfW, tfM)
+        s.absorb(open, high, low, close, time)
+    dayCount := countThisBar
+    lastYear := yearNow
+    tfD.finalize()
+    if countThisBar % 3 == 0
+        tf3.finalize()
+    if dayofweek(time, tz) == dayofweek.friday
+        tfW.finalize()
+    if monthClosesToday(time)
+        tfM.finalize()
+    alert(msgHtf("close"), alert.freq_once_per_bar_close)
+
+// Session open: send the current state too (also fires once when an alert is first created,
+// which populates the board straight away)
+if chartOk and barstate.isnew
+    alert(msgHtf(corrected ? "correction" : "open"), alert.freq_once_per_bar)
+
+// ─────────────────────────────────────────────────────────────
+// Visuals
+// ─────────────────────────────────────────────────────────────
+colFor(string b) => b == "bullish" ? color.teal : b == "bearish" ? color.red : color.gray
+
+if barstate.islast
+    var table t = table.new(position.top_right, 5, 2, border_width = 1)
+    if not chartOk
+        t.cell(0, 0, "EBP HTF: use a DAILY chart", bgcolor = color.new(color.red, 20), text_color = color.white)
+    else if secret == ""
+        t.cell(0, 0, "EBP HTF: shared secret is empty", bgcolor = color.new(color.red, 20), text_color = color.white)
+    else if showTbl
+        t.cell(0, 0, key, text_color = color.white, bgcolor = color.new(color.gray, 60))
+        t.cell(0, 1, "bias", text_color = color.white, bgcolor = color.new(color.gray, 60))
+        i = 1
+        for s in array.from(tfM, tfW, tf3, tfD)
+            t.cell(i, 0, s.name, text_color = color.white, bgcolor = color.new(color.gray, 60))
+            lbl = s.bias == "neutral" ? "—" : (s.bias == "bullish" ? "BULL" : "BEAR") + (s.intact ? "" : " ✖")
+            fb = s.formingBias()
+            t.cell(i, 1, lbl + (fb != "neutral" ? "\n(" + fb + " forming)" : ""), text_color = color.white, bgcolor = color.new(colFor(s.bias), 30), text_size = size.small)
+            i += 1
