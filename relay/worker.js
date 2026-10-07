@@ -298,7 +298,7 @@ function helpText() {
   return [
     "<b>EBP bot</b>",
     "/bias – higher-timeframe biases (M · W · 3D · D)",
-    "/signals – latest 6H/4H/1H signals and whether they qualify",
+    "/signals – qualified 6H/4H/1H signals",
     "/nq /es /ym /rty /gc /cl – one asset in detail",
   ].join("\n");
 }
@@ -318,22 +318,25 @@ function biasText(htf) {
 }
 
 function signalsText(htf, latest) {
-  const lines = ["⚡ <b>Intraday signals</b>"];
-  let any = false;
+  // Qualified intraday signals only (an intact HTF EBP in the same direction), newest first
+  const rows = [];
   for (const k of ASSETS) {
     const sigs = latest[k] || {};
-    const parts = [];
     for (const tf of ITFS) {
       const s = sigs[tf];
       if (!s) continue;
-      any = true;
-      const q = qualifiedBy(htf, k, s.dir).length > 0;
-      parts.push(`${tf} ${s.failed ? "✖" : DOT[s.dir]}${s.dir === "bullish" ? "bull" : "bear"}${q ? " ✓" : ""} ${ago(s.candle_close)}`);
+      const q = qualifiedBy(htf, k, s.dir);
+      if (!q.length) continue;
+      const dec = DECIMALS[k] ?? 2;
+      rows.push({ t: s.candle_close || "", text:
+        `${s.failed ? "✖" : DOT[s.dir]} <b>${k} ${tf}</b> ${s.dir} · ${ago(s.candle_close)} · ${s.failed ? "failed at" : s.dir === "bullish" ? "fails below" : "fails above"} ${fmt(s.sweep, dec)} · by ${q.map(x => HTF_LABEL[x]).join(", ")}` });
     }
-    if (parts.length) lines.push(`<code>${k.padEnd(3)}</code> ${parts.join(" · ")}`);
   }
-  if (!any) lines.push("No intraday signals received yet.");
-  lines.push("<i>✓ = qualified by an intact HTF bias · ✖ = failed</i>");
+  rows.sort((a, b) => (a.t < b.t ? 1 : -1));
+  const lines = ["⚡ <b>Qualified intraday signals</b>"];
+  if (!rows.length) lines.push("None at the moment.");
+  else lines.push(...rows.map(r => r.text));
+  lines.push("<i>✖ = sweep level has since been traded through</i>");
   return lines.join("\n");
 }
 
