@@ -68,6 +68,51 @@ def load_yahoo(symbol: str, years: int = 3) -> pd.DataFrame:
     return df.dropna()
 
 
+def cme_holidays(years: range) -> set[pd.Timestamp]:
+    """
+    US exchange holidays on which a shortened Globex session trades but CME assigns the
+    activity to the NEXT trade date (so TradingView shows no bar for the holiday itself).
+    Good Friday is deliberately excluded: when the exchange opens for it, it is its own trade date.
+    """
+    from pandas.tseries.holiday import (
+        AbstractHolidayCalendar, Holiday, USMartinLutherKingJr, USPresidentsDay,
+        USMemorialDay, USLaborDay, USThanksgivingDay, nearest_workday,
+    )
+
+    class _Cal(AbstractHolidayCalendar):
+        rules = [
+            Holiday("NewYear", month=1, day=1, observance=nearest_workday),
+            USMartinLutherKingJr, USPresidentsDay, USMemorialDay,
+            Holiday("Juneteenth", month=6, day=19, observance=nearest_workday),
+            Holiday("Independence", month=7, day=4, observance=nearest_workday),
+            USLaborDay, USThanksgivingDay,
+            Holiday("Christmas", month=12, day=25, observance=nearest_workday),
+        ]
+
+    cal = _Cal()
+    out: set[pd.Timestamp] = set()
+    for y in years:
+        out.update(pd.Timestamp(d) for d in cal.holidays(pd.Timestamp(y, 1, 1), pd.Timestamp(y, 12, 31)))
+    return out
+
+
+def merge_holiday_sessions(daily: pd.DataFrame) -> pd.DataFrame:
+    """Fold any holiday-dated session into the next trading day's bar (CME trade-date convention)."""
+    if daily.empty:
+        return daily
+    hols = cme_holidays(range(daily.index.min().year, daily.index.max().year + 1))
+    daily = daily.sort_index().copy()
+    dates = list(daily.index)
+    for i, d in enumerate(dates):
+        if d in hols and i + 1 < len(dates):
+            nxt = dates[i + 1]
+            daily.loc[nxt, "open"] = daily.loc[d, "open"]
+            daily.loc[nxt, "high"] = max(daily.loc[d, "high"], daily.loc[nxt, "high"])
+            daily.loc[nxt, "low"] = min(daily.loc[d, "low"], daily.loc[nxt, "low"])
+            daily = daily.drop(d)
+    return daily
+
+
 def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, backfill_from: str = "2024-01-01") -> dict[str, pd.DataFrame]:
     """
     Daily session bars (18:00-17:00 New York) built from Databento hourly bars for the
@@ -98,13 +143,13 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
 
     import time as _time
 
-    def fetch(symbol: str, s0: pd.Timestamp, s1: pd.Timestamp) -> pd.DataFrame:
+    def fetch(symbol: str, s0: pd.Timestamp, s1: pd.Timestamp, schema: str = "ohlcv-1h") -> pd.DataFrame:
         last_err: Exception | None = None
         for attempt in range(4):
             try:
                 data = client.timeseries.get_range(
                     dataset="GLBX.MDP3", symbols=[symbol], stype_in="continuous",
-                    schema="ohlcv-1h", start=s0, end=s1,
+                    schema=schema, start=s0, end=s1,
                 )
                 d = data.to_df().reset_index()
                 d["req_symbol"] = symbol
@@ -117,6 +162,7 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
         raise RuntimeError(f"{symbol}: {last_err}")
 
     chunks: list[pd.DataFrame] = []
+    settle_chunks: list[pd.DataFrame] = []
     for k in keys:
         s0 = start
         while s0 < end:
@@ -124,8 +170,17 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
             d = fetch(f"{k}.c.0", s0, s1)
             print(f"  {k}.c.0 {s0.date()}..{s1.date()}: {len(d)} hourly bars", file=sys.stderr)
             chunks.append(d)
+            st = fetch(f"{k}.c.0", s0, s1, schema="statistics")
+            if not st.empty and "stat_type" in st.columns:
+                st = st[st["stat_type"] == 3]  # 3 = settlement price
+            settle_chunks.append(st)
             s0 = s1
     df = pd.concat(chunks, ignore_index=True)
+    settles = pd.concat(settle_chunks, ignore_index=True) if settle_chunks else pd.DataFrame()
+    if not settles.empty:
+        ref = pd.to_datetime(settles["ts_ref"] if "ts_ref" in settles.columns else settles["ts_event"], utc=True)
+        settles["trade_date"] = (ref.dt.tz_convert(NY) + pd.Timedelta(hours=6)).dt.normalize().dt.tz_localize(None)
+        print(f"databento settlement rows: {len(settles)}; sample: {settles[['req_symbol','trade_date','price']].tail(3).to_dict('records')}", file=sys.stderr)
     if df.empty:
         raise RuntimeError("Databento returned no rows")
     print(f"databento columns: {list(df.columns)}", file=sys.stderr)
@@ -148,11 +203,19 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
         })
         daily.index.name = "date"
         daily = daily[daily.index.weekday < 5]
+        daily = merge_holiday_sessions(daily)
+        # TradingView uses the settlement price as the daily close for futures
+        if not settles.empty:
+            sp = settles[settles["req_symbol"] == f"{k}.c.0"].sort_values("ts_event")
+            sp = sp.groupby("trade_date")["price"].last()
+            sp = sp[sp.index.isin(daily.index)]
+            daily.loc[sp.index, "close"] = sp.values
+            print(f"  {k}: settlement applied to {len(sp)} of {len(daily)} sessions", file=sys.stderr)
         if k in cache:
             merged = pd.concat([cache[k][~cache[k].index.isin(daily.index)], daily]).sort_index()
         else:
             merged = daily.sort_index()
-        merged = merged[~merged.index.duplicated(keep="last")]
+        merged = merge_holiday_sessions(merged[~merged.index.duplicated(keep="last")])
         if history_dir:
             merged.to_csv(history_dir / f"{k}.csv")
         out[k] = merged
