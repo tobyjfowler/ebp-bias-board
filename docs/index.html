@@ -271,7 +271,7 @@
         const bull = biases.filter(b => b === "bullish").length, bear = biases.filter(b => b === "bearish").length;
         assets.push({
           key, name: names[key], price: h.price, last_daily_closed: h.reason === "close", source: "tradingview",
-          trade_date: h.trade_date, received_at: h.received_at, timeframes: tfs,
+          trade_date: (h.timeframes.D && h.timeframes.D.candle_end) || h.trade_date, received_at: h.received_at, timeframes: tfs,
           alignment: { bullish: bull, bearish: bear, net: bull - bear, summary: bull >= 3 ? "bullish" : bear >= 3 ? "bearish" : "mixed" },
         });
         if (!newest || h.received_at > newest) newest = h.received_at;

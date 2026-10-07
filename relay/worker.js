@@ -94,7 +94,7 @@ async function handleHtf(env, body, asset) {
       bias: ["bullish", "bearish"].includes(t.bias) ? t.bias : "neutral",
       open: num(t.open), high: num(t.high), low: num(t.low), close: num(t.close),
       prior_open: num(t.prior_open), prior_high: num(t.prior_high), prior_low: num(t.prior_low),
-      sweep: num(t.sweep),
+      sweep: t.bias === "neutral" ? null : num(t.sweep),
       intact: t.bias === "neutral" ? null : t.intact !== false,
       candle_start: t.candle_start || null, candle_end: t.candle_end || null,
       forming_bias: t.forming_bias || "neutral", forming_start: t.forming_start || null,

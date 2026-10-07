@@ -29,6 +29,9 @@ showTbl  = input.bool(true, "Show bias table", group = grpD)
 // Period bookkeeping
 // ─────────────────────────────────────────────────────────────
 chartOk = timeframe.isdaily and timeframe.multiplier == 1
+// TradingView stamps a daily futures bar with its session open (18:00 the evening before);
+// the trade date your chart shows is the date the session closes, so all dates use time_close.
+td = time_close
 tz      = syminfo.timezone
 key     = assetKey != "" ? assetKey : str.replace_all(str.replace_all(syminfo.ticker, "1!", ""), "!", "")
 
@@ -38,7 +41,7 @@ dstr(int t) => str.format_time(t, "yyyy-MM-dd", tz)
 // trading-day counter within the year (for 3-day groups), counted on confirmed bars
 var int dayCount = 0
 var int lastYear = na
-yearNow = year(time, tz)
+yearNow = year(td, tz)
 
 weekKey(int t) =>
     dow = dayofweek(t, tz)
@@ -160,23 +163,23 @@ method rollIfNew(Tf s, int k, int t) =>
 // Trading-day count for THIS bar
 countThisBar = (na(lastYear) or yearNow != lastYear) ? 1 : dayCount + 1
 
-kD = int(time / 86400000)
-k3 = threeDayKey(time, countThisBar)
-kW = weekKey(time)
-kM = monthKey(time)
+kD = int(td / 86400000)
+k3 = threeDayKey(td, countThisBar)
+kW = weekKey(td)
+kM = monthKey(td)
 
 // 1) New bar opened: roll periods; if any HTF closed un-declared, send a correction
 bool corrected = false
 if chartOk and barstate.isnew
-    corrected := tfD.rollIfNew(kD, time) or corrected
-    corrected := tf3.rollIfNew(k3, time) or corrected
-    corrected := tfW.rollIfNew(kW, time) or corrected
-    corrected := tfM.rollIfNew(kM, time) or corrected
+    corrected := tfD.rollIfNew(kD, td) or corrected
+    corrected := tf3.rollIfNew(k3, td) or corrected
+    corrected := tfW.rollIfNew(kW, td) or corrected
+    corrected := tfM.rollIfNew(kM, td) or corrected
 
 // 2) Fail checks on every update, including the live bar
 checkFail(Tf s) =>
     bool hit = false
-    if s.bias != "neutral" and s.intact and not na(s.sweep) and (s.lastEnd < time)
+    if s.bias != "neutral" and s.intact and not na(s.sweep) and (s.lastEnd < td)
         hit := s.bias == "bullish" ? low < s.sweep : high > s.sweep
         if hit
             s.intact := false
@@ -184,7 +187,7 @@ checkFail(Tf s) =>
 
 msgFail(string tfName, string b, float sw) =>
     '{"event":"htf_fail","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
-     '","tf":"' + tfName + '","dir":"' + b + '","sweep":' + str.tostring(sw, format.mintick) + ',"failed_at":' + str.tostring(time) + '}'
+     '","tf":"' + tfName + '","dir":"' + b + '","sweep":' + str.tostring(sw, format.mintick) + ',"failed_at":' + str.tostring(timenow) + '}'
 
 if chartOk
     for s in array.from(tfD, tf3, tfW, tfM)
@@ -207,25 +210,25 @@ tfJson(Tf s) =>
 
 msgHtf(string reason) =>
     '{"event":"htf","reason":"' + reason + '","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
-     '","trade_date":"' + dstr(time) + '","as_of":' + str.tostring(time_close) + ',"bar_time":' + str.tostring(time) + ',"price":' + str.tostring(close, format.mintick) + ',' +
+     '","trade_date":"' + dstr(td) + '","as_of":' + str.tostring(time_close) + ',"bar_time":' + str.tostring(time) + ',"price":' + str.tostring(close, format.mintick) + ',' +
      tfJson(tfD) + ',' + tfJson(tf3) + ',' + tfJson(tfW) + ',' + tfJson(tfM) + '}'
 
 if chartOk and barstate.isconfirmed
     // make sure periods exist (first bars of history)
-    tfD.rollIfNew(kD, time)
-    tf3.rollIfNew(k3, time)
-    tfW.rollIfNew(kW, time)
-    tfM.rollIfNew(kM, time)
+    tfD.rollIfNew(kD, td)
+    tf3.rollIfNew(k3, td)
+    tfW.rollIfNew(kW, td)
+    tfM.rollIfNew(kM, td)
     for s in array.from(tfD, tf3, tfW, tfM)
-        s.absorb(open, high, low, close, time)
+        s.absorb(open, high, low, close, td)
     dayCount := countThisBar
     lastYear := yearNow
     tfD.finalize()
     if countThisBar % 3 == 0
         tf3.finalize()
-    if dayofweek(time, tz) == dayofweek.friday
+    if dayofweek(td, tz) == dayofweek.friday
         tfW.finalize()
-    if monthClosesToday(time)
+    if monthClosesToday(td)
         tfM.finalize()
     alert(msgHtf("close"), alert.freq_once_per_bar_close)
 
