@@ -44,7 +44,7 @@ weekKey(int t) =>
     dow = dayofweek(t, tz)
     off = (dow - dayofweek.monday + 7) % 7
     mon = t - off * 86400000
-    year(mon, tz) * 1000 + dayofyear(mon, tz)
+    year(mon, tz) * 10000 + month(mon, tz) * 100 + dayofmonth(mon, tz)
 
 monthKey(int t) => year(t, tz) * 100 + month(t, tz)
 
