@@ -162,7 +162,6 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
         raise RuntimeError(f"{symbol}: {last_err}")
 
     chunks: list[pd.DataFrame] = []
-    settle_chunks: list[pd.DataFrame] = []
     for k in keys:
         s0 = start
         while s0 < end:
@@ -170,17 +169,8 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
             d = fetch(f"{k}.c.0", s0, s1)
             print(f"  {k}.c.0 {s0.date()}..{s1.date()}: {len(d)} hourly bars", file=sys.stderr)
             chunks.append(d)
-            st = fetch(f"{k}.c.0", s0, s1, schema="statistics")
-            if not st.empty and "stat_type" in st.columns:
-                st = st[st["stat_type"] == 3]  # 3 = settlement price
-            settle_chunks.append(st)
             s0 = s1
     df = pd.concat(chunks, ignore_index=True)
-    settles = pd.concat(settle_chunks, ignore_index=True) if settle_chunks else pd.DataFrame()
-    if not settles.empty:
-        ref = pd.to_datetime(settles["ts_ref"] if "ts_ref" in settles.columns else settles["ts_event"], utc=True)
-        settles["trade_date"] = (ref.dt.tz_convert(NY) + pd.Timedelta(hours=6)).dt.normalize().dt.tz_localize(None)
-        print(f"databento settlement rows: {len(settles)}; sample: {settles[['req_symbol','trade_date','price']].tail(3).to_dict('records')}", file=sys.stderr)
     if df.empty:
         raise RuntimeError("Databento returned no rows")
     print(f"databento columns: {list(df.columns)}", file=sys.stderr)
@@ -204,22 +194,76 @@ def load_databento_all(keys: list[str], history_dir: Path | None, api_key: str, 
         daily.index.name = "date"
         daily = daily[daily.index.weekday < 5]
         daily = merge_holiday_sessions(daily)
-        # TradingView uses the settlement price as the daily close for futures
-        if not settles.empty:
-            sp = settles[settles["req_symbol"] == f"{k}.c.0"].sort_values("ts_event")
-            sp = sp.groupby("trade_date")["price"].last()
-            sp = sp[sp.index.isin(daily.index)]
-            daily.loc[sp.index, "close"] = sp.values
-            print(f"  {k}: settlement applied to {len(sp)} of {len(daily)} sessions", file=sys.stderr)
+        daily["settle"] = float("nan")
         if k in cache:
-            merged = pd.concat([cache[k][~cache[k].index.isin(daily.index)], daily]).sort_index()
+            old_rows = cache[k][~cache[k].index.isin(daily.index)]
+            if "settle" not in old_rows.columns:
+                old_rows = old_rows.assign(settle=float("nan"))
+            if "settle" in cache[k].columns:
+                daily["settle"] = cache[k]["settle"].reindex(daily.index)  # keep known settlements
+            merged = pd.concat([old_rows, daily]).sort_index()
         else:
             merged = daily.sort_index()
         merged = merge_holiday_sessions(merged[~merged.index.duplicated(keep="last")])
+
+        # TradingView uses the settlement price as the daily close for futures.
+        # Fetch it only for the dates whose close the board depends on.
+        needed = settlement_dates_needed(merged[["open", "high", "low", "close"]], now_ny=datetime.now(NY))
+        todo = [d for d in needed if d in merged.index and pd.isna(merged.loc[d, "settle"])]
+        got = 0
+        for d in todo:
+            px = fetch_settlement(fetch, f"{k}.c.0", d)
+            if px is not None:
+                merged.loc[d, "settle"] = px
+                got += 1
+        print(f"  {k}: settlement needed for {len(needed)} dates, fetched {got} of {len(todo)} new", file=sys.stderr)
+
         if history_dir:
             merged.to_csv(history_dir / f"{k}.csv")
-        out[k] = merged
+        final = merged[["open", "high", "low"]].copy()
+        final["close"] = merged["settle"].fillna(merged["close"])
+        final["close_is_settlement"] = merged["settle"].notna()
+        out[k] = final
     return out
+
+
+def settlement_dates_needed(daily: pd.DataFrame, now_ny: datetime) -> list[pd.Timestamp]:
+    """Last day of the most recent closed candles on every timeframe, plus the last few sessions."""
+    last_daily = daily.index[-1]
+    last_closed = last_bar_is_closed(last_daily, now_ny)
+    dates: set[pd.Timestamp] = set()
+    for tf in TIMEFRAMES:
+        bars = resample(daily, tf)
+        idx = len(bars) - 1
+        while idx >= 0 and not candle_is_closed(tf, bars.iloc[idx], last_daily, last_closed, now_ny):
+            idx -= 1
+        for j in (idx, idx - 1):
+            if j >= 0:
+                dates.add(pd.Timestamp(bars.iloc[j]["end"]))
+    closed_days = daily.index[:-1] if not last_closed else daily.index
+    dates.update(pd.Timestamp(d) for d in closed_days[-5:])
+    return sorted(dates)
+
+
+def fetch_settlement(fetch, symbol: str, day: pd.Timestamp) -> float | None:
+    """Final settlement for one trade date: statistics stat_type 3, published after the 16:00 NY settle
+    (earlier on half days), so query a 12:55-17:30 NY window on that date."""
+    s0 = pd.Timestamp(datetime(day.year, day.month, day.day, 12, 55, tzinfo=NY)).tz_convert("UTC")
+    s1 = pd.Timestamp(datetime(day.year, day.month, day.day, 17, 30, tzinfo=NY)).tz_convert("UTC")
+    try:
+        st = fetch(symbol, s0, s1, schema="statistics")
+    except Exception as e:  # noqa: BLE001
+        print(f"  settlement {symbol} {day.date()}: {e}", file=sys.stderr)
+        return None
+    if st.empty or "stat_type" in st.columns and (st["stat_type"] == 3).sum() == 0:
+        return None
+    st = st[st["stat_type"] == 3].sort_values("ts_event")
+    if "ts_ref" in st.columns:
+        ref = pd.to_datetime(st["ts_ref"], utc=True).dt.date
+        same = st[ref == day.date()]
+        if not same.empty:
+            st = same
+    return float(st["price"].iloc[-1])
 
 
 def load_tradingview_csv(path: Path) -> pd.DataFrame:
@@ -389,9 +433,11 @@ def analyse_asset(daily: pd.DataFrame, decimals: int, now_ny: datetime) -> dict:
         if forming is not None:
             forming_bias = classify(forming, cur)
 
+        close_settled = bool(daily.loc[cur["end"], "close_is_settlement"]) if "close_is_settlement" in daily.columns else None
         result["timeframes"][tf] = {
             "label": TF_LABELS[tf],
             "bias": bias,
+            "close_is_settlement": close_settled,
             "candle_start": str(cur["start"].date()),
             "candle_end": str(cur["end"].date()),
             "open": round(float(cur["open"]), decimals),
