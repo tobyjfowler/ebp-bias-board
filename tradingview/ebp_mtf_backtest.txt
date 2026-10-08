@@ -50,6 +50,8 @@ skipTooWide   = input.bool(true, "Skip trade if 1 contract exceeds $ risk", grou
 grpX          = "Session filter"
 useSession    = input.bool(false, "Only enter inside session", group = grpX)
 sess          = input.session("0930-1600", "Session (New York)", group = grpX)
+flatWeekend   = input.bool(false, "Flat over the weekend", group = grpX,
+     tooltip = "Closes any open trade at the close of the week's last 1H candle (Friday 17:00 New York) and takes no new trade on that candle.")
 
 grpD          = "Display"
 showTable     = input.bool(true, "Show results table", group = grpD)
@@ -379,7 +381,12 @@ var bool  beDone = false
 var float activeRisk = na
 beMode = targetMode == "BE at swing, TP fixed R"
 
-take = sigTf != "" and inSession and (tradeWhich == "All" or (tradeWhich == "Qualified only" and sigQ) or (tradeWhich == "Unqualified only" and not sigQ))
+// last 1H candle of the week: the one that completes Friday's daily candle
+weekEndBar = dayCloses and dayofweek(dTc, tz) == dayofweek.friday
+if flatWeekend and weekEndBar and strategy.position_size != 0
+    strategy.close_all(comment = "Weekend flat")
+
+take = sigTf != "" and inSession and not (flatWeekend and weekEndBar) and (tradeWhich == "All" or (tradeWhich == "Qualified only" and sigQ) or (tradeWhich == "Unqualified only" and not sigQ))
 pos = strategy.position_size
 wantLong  = take and sigDir == "bullish" and (pos == 0 or (allowReverse and pos < 0))
 wantShort = take and sigDir == "bearish" and (pos == 0 or (allowReverse and pos > 0))
