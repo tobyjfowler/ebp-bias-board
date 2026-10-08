@@ -103,6 +103,26 @@ handle(TfState st, bool isNew, bool bull, bool bear, float lo, float hi, float c
 [f1, d1] = handle(tf1, new1, b1, s1, l1, h1, c1, po1, t01, t11)
 
 // ─────────────────────────────────────────────────────────────
+// Early warning: a chart-timeframe candle closing through the last closed DAILY candle's
+// equilibrium (midpoint of its range). The relay only acts on it if that daily candle is an EBP.
+// ─────────────────────────────────────────────────────────────
+dailyClosedHL() =>
+    [high[1], low[1]]
+[dH, dL] = request.security(syminfo.tickerid, "D", dailyClosedHL(), lookahead = barmerge.lookahead_on)
+dailyEq = (dH + dL) / 2
+
+msgEqCross(string side, float eq) =>
+    '{"event":"eq_cross","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
+     '","tf":"' + (timeframe.period == "60" ? "1H" : timeframe.period + "m") + '","side":"' + side + '","close":' + str.tostring(close, format.mintick) +
+     ',"eq":' + str.tostring(eq, format.mintick) + ',"candle_close":' + str.tostring(time_close) + '}'
+
+if chartOk and barstate.isconfirmed and not na(dailyEq)
+    if close < dailyEq and close[1] >= dailyEq
+        alert(msgEqCross("below", dailyEq), alert.freq_once_per_bar_close)
+    else if close > dailyEq and close[1] <= dailyEq
+        alert(msgEqCross("above", dailyEq), alert.freq_once_per_bar_close)
+
+// ─────────────────────────────────────────────────────────────
 // Visuals: markers on the chart bar where each timeframe's EBP confirmed
 // ─────────────────────────────────────────────────────────────
 plotshape(f6 and d6 == "bullish", "6H bull", shape.triangleup,   location.belowbar, bullCol, text = "6H", size = size.small)

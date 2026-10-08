@@ -72,6 +72,11 @@
   .pill.failed { background: transparent; border: 1.5px dashed currentColor; }
   .pill.failed.bullish { color: var(--bull); } .pill.failed.bearish { color: var(--bear); }
   .pill.failed .lbl { text-decoration: line-through; text-decoration-thickness: 2px; }
+  .pill .eqtag { font-size: 9px; letter-spacing: 0.08em; padding: 1px 4px; border-radius: 3px; background: rgba(0,0,0,0.25); }
+  .pill.eqflip { outline: 2px dashed currentColor; outline-offset: -2px; }
+  .sub.eqnote { color: var(--warn); }
+  .sub.eqwarn { color: var(--warn); font-weight: 600; }
+  .isig .q.flip { background: var(--warn); color: #1a1200; border: 0; }
   .lvl { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .lvl b { color: var(--fg); font-weight: 500; }
   .sub { font-size: 11px; color: var(--muted); }
@@ -144,6 +149,7 @@
     <span><span class="sw" style="background:var(--bear)"></span>Bearish EBP</span>
     <span><span class="sw" style="background:var(--neutral)"></span>Neutral</span>
     <span><span class="sw" style="border:1.5px dashed var(--muted)"></span>Failed (price traded through the sweep level)</span>
+    <span><span class="sw" style="border:2px dashed var(--muted)"></span>EQ-flipped bias (opposite EBP closed through the candle's midpoint)</span>
     <label class="toggle" id="toggle-unq-label"><input type="checkbox" id="toggle-unq"> Hide unqualified intraday signals</label>
   </div>
 
@@ -152,7 +158,8 @@
   <footer>
     <p>Each cell is the last closed candle on that timeframe. Bullish: it swept the prior candle's low and closed above the prior open. Bearish: it swept the prior high and closed below the prior open. The level shown is the sweep extreme, which is where the pattern fails.</p>
     <p>Higher-timeframe cells are sent from TradingView at each daily close (17:00 New York): daily candles run 18:00 to 17:00, weeks Monday to Friday, calendar months, and 3-day candles counted in threes from the first trading day of each year.</p>
-    <p>Intraday row: the latest 6H, 4H and 1H EBP per asset, sent live from TradingView. A signal is <b>qualified</b> when at least one higher timeframe has an intact EBP in the same direction; otherwise it is shown faded and no alert is sent.</p>
+    <p>Each higher-timeframe EBP has an equilibrium (EQ), the midpoint of its range. If a lower-timeframe EBP in the opposite direction closes through EQ, the bias flips to that direction (marked EQ) and the violating candle's sweep level becomes the new fail level; a same-direction EBP closing back through EQ reclaims it. A plain close through EQ with no EBP shows as "EQ tested".</p>
+    <p>Intraday row: the latest 6H, 4H and 1H EBP per asset, sent live from TradingView. A signal is <b>qualified</b> when at least one higher timeframe's bias (including EQ-flipped ones) matches its direction and is not failed; otherwise it is shown faded and no alert is sent.</p>
   </footer>
 </div>
 
@@ -182,7 +189,8 @@
     const bias = t.bias;
     const failed = bias !== "neutral" && t.intact === false;
     const label = bias === "bullish" ? "BULL" : bias === "bearish" ? "BEAR" : "NEUTRAL";
-    const pill = `<span class="pill ${bias} ${failed ? "failed" : ""}"><span class="lbl">${label}</span></span>`;
+    const violated = t.state === "violated";
+    const pill = `<span class="pill ${bias} ${failed ? "failed" : ""} ${violated ? "eqflip" : ""}"><span class="lbl">${label}</span>${violated ? `<span class="eqtag">EQ</span>` : ""}</span>`;
     const failWord = failed ? "failed at" : (bias === "bullish" ? "fails below" : "fails above");
     const lvl = bias === "neutral"
       ? `<span class="lvl">close <b>${fmtNum(t.close, dec)}</b></span>`
@@ -191,9 +199,15 @@
     if (t.forming_bias && t.forming_bias !== "neutral") {
       forming = ` · forming <span class="forming ${t.forming_bias}">${t.forming_bias}</span>`;
     }
+    let eqLine = "";
+    if (t.eq != null) {
+      if (violated) eqLine = `<span class="sub eqnote">was ${t.orig_bias === "bullish" ? "bull" : "bear"} · EQ ${fmtNum(t.eq, dec)} violated by ${t.violation.by_tf}</span>`;
+      else if (t.eq_tested) eqLine = `<span class="sub eqwarn">👀 EQ ${fmtNum(t.eq, dec)} tested by ${t.eq_tested.by_tf}</span>`;
+      else if (!failed) eqLine = `<span class="sub">EQ ${fmtNum(t.eq, dec)}</span>`;
+    }
     const range = t.candle_start === t.candle_end ? fmtDay(t.candle_end) : `${fmtDay(t.candle_start)}–${fmtDay(t.candle_end)}`;
     const next = t.next_close ? `next ${fmtDate(t.next_close)}` : (t.forming_start ? `forming from ${fmtDay(t.forming_start)}` : "");
-    return `<div class="cell"><span class="tf">${TF_SHORT[tf]}</span>${pill}${lvl}<span class="sub">${range}${forming}<br>${next}</span></div>`;
+    return `<div class="cell"><span class="tf">${TF_SHORT[tf]}</span>${pill}${lvl}${eqLine}<span class="sub">${range}${forming}<br>${next}</span></div>`;
   }
 
   function ago(iso) {
@@ -206,7 +220,7 @@
   }
 
   function qualified(asset, dir) {
-    return TF_ORDER.some(tf => { const t = asset.timeframes[tf]; return t && t.bias === dir && t.intact === true; });
+    return TF_ORDER.some(tf => { const t = asset.timeframes[tf]; return t && t.bias === dir && (t.state ? (t.state === "intact" || t.state === "violated") : t.intact === true); });
   }
 
   function intradayHtml(asset, latest, dec) {
@@ -222,6 +236,7 @@
         <span class="pill ${s.dir} ${s.failed ? "failed" : ""}"><span class="lbl">${label}</span></span>
         <span class="meta">${ago(s.candle_close)} · ${lvl}</span>
         <span class="q ${q ? "yes" : "no"}">${q ? "qualified" : "unqualified"}</span>
+        ${s.flips && s.flips.length ? `<span class="q flip">⚠ flipped ${s.flips.map(x => TF_SHORT[x]).join("/")}</span>` : ""}
       </div>`;
     }).join("");
     return `<div class="intraday"><span class="ilabel">Intraday</span>${cells}</div>`;
@@ -266,8 +281,14 @@
       const h = htf[key];
       if (h) {
         const tfs = {};
-        for (const tf of TF_ORDER) tfs[tf] = { ...h.timeframes[tf], invalidation: h.timeframes[tf].sweep, next_close: null };
-        const biases = TF_ORDER.map(tf => tfs[tf]).filter(t => t.bias !== "neutral" && t.intact !== false).map(t => t.bias);
+        for (const tf of TF_ORDER) {
+          const t = h.timeframes[tf];
+          const state = t.bias === "neutral" ? "none" : t.intact === false ? "failed" : t.violation ? "violated" : "intact";
+          const eff = state === "violated" ? (t.bias === "bullish" ? "bearish" : "bullish") : state === "failed" ? "neutral" : t.bias;
+          tfs[tf] = { ...t, orig_bias: t.bias, bias: eff, state, eq: t.bias === "neutral" ? null : (t.high + t.low) / 2,
+            invalidation: state === "violated" ? t.violation.sweep : t.sweep, intact: state === "failed" ? false : (state === "none" ? null : true), next_close: null };
+        }
+        const biases = TF_ORDER.map(tf => tfs[tf]).filter(t => t.state === "intact" || t.state === "violated").map(t => t.bias);
         const bull = biases.filter(b => b === "bullish").length, bear = biases.filter(b => b === "bearish").length;
         assets.push({
           key, name: names[key], price: h.price, last_daily_closed: h.reason === "close", source: "tradingview",
