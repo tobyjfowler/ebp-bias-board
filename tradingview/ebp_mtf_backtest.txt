@@ -215,8 +215,20 @@ itf(string res) =>
 // ─────────────────────────────────────────────────────────────
 // Qualification
 // ─────────────────────────────────────────────────────────────
-qualified(string dir) =>
-    (qualTfM and tfM.effBias() == dir) or (qualTfW and tfW.effBias() == dir) or (qualTf3 and tf3.effBias() == dir) or (qualTfD and tfD.effBias() == dir)
+// which HTFs support a direction: letters M W T(3-day) D, lower-case when the support comes from an EQ flip
+supporters(string dir) =>
+    string out = ""
+    if qualTfM and tfM.effBias() == dir
+        out += tfM.violated ? "m" : "M"
+    if qualTfW and tfW.effBias() == dir
+        out += tfW.violated ? "w" : "W"
+    if qualTf3 and tf3.effBias() == dir
+        out += tf3.violated ? "t" : "T"
+    if qualTfD and tfD.effBias() == dir
+        out += tfD.violated ? "d" : "D"
+    out
+
+qualified(string dir) => supporters(dir) != ""
 
 inSession = not useSession or not na(time(timeframe.period, sess, "America/New_York"))
 
@@ -374,7 +386,7 @@ if beMode and pos != 0 and not beDone and not na(activeTrigger)
 
 rrFixed = targetMode == "1R" ? 1.0 : targetMode == "2R" ? 2.0 : targetMode == "3R" ? 3.0 : fallbackRR
 
-entryTag(string tf, bool q, string dir, float riskPts) => tf + "|" + (q ? "Q" : "U") + "|" + dir + "|" + str.tostring(riskPts, "#.##")
+entryTag(string tf, bool q, string dir, float riskPts) => tf + "|" + (q ? "Q" : "U") + "|" + dir + "|" + str.tostring(riskPts, "#.##") + "|" + supporters(dir == "L" ? "bullish" : "bearish")
 
 if wantLong and sigSweep < close
     risk = close - sigSweep
@@ -427,6 +439,18 @@ var array<float> gMaxDD = array.new<float>(6, 0.0)
 var array<float> gCum   = array.new<float>(6, 0.0)
 var array<float> gPeak  = array.new<float>(6, 0.0)
 
+// results by supporting HTF (a trade with two supporters counts in both rows)
+var array<string> hNames = array.from("by Monthly", "by Weekly", "by 3-Day", "by Daily", "via EQ flip", "2+ supporters", "1 supporter")
+var array<int>   hCount = array.new<int>(7, 0)
+var array<int>   hWins  = array.new<int>(7, 0)
+var array<float> hSumR  = array.new<float>(7, 0.0)
+
+addH(int i, float r) =>
+    hCount.set(i, hCount.get(i) + 1)
+    if r > 0
+        hWins.set(i, hWins.get(i) + 1)
+    hSumR.set(i, hSumR.get(i) + r)
+
 while seen < strategy.closedtrades
     cmt = strategy.closedtrades.entry_comment(seen)
     parts = str.split(cmt, "|")
@@ -444,6 +468,22 @@ while seen < strategy.closedtrades
             gCum.set(gi, cum)
             gPeak.set(gi, math.max(gPeak.get(gi), cum))
             gMaxDD.set(gi, math.max(gMaxDD.get(gi), gPeak.get(gi) - cum))
+            supp = parts.size() >= 5 ? parts.get(4) : ""
+            if supp != ""
+                if str.contains(supp, "M") or str.contains(supp, "m")
+                    addH(0, r)
+                if str.contains(supp, "W") or str.contains(supp, "w")
+                    addH(1, r)
+                if str.contains(supp, "T") or str.contains(supp, "t")
+                    addH(2, r)
+                if str.contains(supp, "D") or str.contains(supp, "d")
+                    addH(3, r)
+                if supp != str.upper(supp)
+                    addH(4, r)
+                if str.length(supp) >= 2
+                    addH(5, r)
+                else
+                    addH(6, r)
     seen += 1
 
 // ─────────────────────────────────────────────────────────────
@@ -458,7 +498,7 @@ plot(inTrade ? activeStop : na, "Stop", color.red, 1, plot.style_linebr)
 plot(inTrade ? activeTarget : na, "Target", color.green, 1, plot.style_linebr)
 
 if barstate.islast
-    var table t = table.new(position.top_right, 7, 8, border_width = 1)
+    var table t = table.new(position.top_right, 7, 17, border_width = 1)
     if not chartOk
         t.cell(0, 0, "EBP BT: use a 1H chart", bgcolor = color.new(color.red, 20), text_color = color.white)
     else if showTable
@@ -476,11 +516,27 @@ if barstate.islast
             t.cell(4, g + 1, n > 0 ? str.tostring(sr, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
             t.cell(5, g + 1, n > 0 ? str.tostring(gMaxDD.get(g), "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
             t.cell(6, g + 1, n > 0 ? str.tostring(sr / n, "#.00") + "R/trade" : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        // qualified trades by supporting HTF
+        t.merge_cells(0, 7, 6, 7)
+        t.cell(0, 7, "Qualified trades by supporting timeframe (a trade counts in every row that supported it)", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
+        for g = 0 to 6
+            n = hCount.get(g)
+            w = hWins.get(g)
+            sr = hSumR.get(g)
+            t.cell(0, g + 8, hNames.get(g), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(1, g + 8, str.tostring(n), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(2, g + 8, n > 0 ? str.tostring(100.0 * w / n, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(3, g + 8, n > 0 ? str.tostring(sr / n, "#.00") : "—", text_color = color.white, bgcolor = color.new(n > 0 and sr > 0 ? color.teal : color.gray, 60), text_size = size.small)
+            t.cell(4, g + 8, n > 0 ? str.tostring(sr, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.merge_cells(5, g + 8, 6, g + 8)
+            t.cell(5, g + 8, "", bgcolor = color.new(color.gray, 70))
         // current bias row
-        t.cell(0, 7, "Bias now", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
-        t.cell(1, 7, "M " + tfM.effBias() + (tfM.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-        t.cell(2, 7, "W " + tfW.effBias() + (tfW.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-        t.cell(3, 7, "3D " + tf3.effBias() + (tf3.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-        t.cell(4, 7, "D " + tfD.effBias() + (tfD.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-        t.merge_cells(5, 7, 6, 7)
-        t.cell(5, 7, "Q = qualified · U = unqualified · R = risk units", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(0, 15, "Bias now", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
+        t.cell(1, 15, "M " + tfM.effBias() + (tfM.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(2, 15, "W " + tfW.effBias() + (tfW.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(3, 15, "3D " + tf3.effBias() + (tf3.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(4, 15, "D " + tfD.effBias() + (tfD.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.merge_cells(5, 15, 6, 15)
+        t.cell(5, 15, "", bgcolor = color.new(color.gray, 70))
+        t.merge_cells(0, 16, 6, 16)
+        t.cell(0, 16, "Q = qualified · U = unqualified · R = risk units · trade list comments: tf|Q/U|side|risk pts|supporters (lower-case = EQ-flipped)", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
