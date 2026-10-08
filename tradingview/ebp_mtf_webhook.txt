@@ -77,7 +77,7 @@ msgSignal(string tf, string dir, float sweep, float c, float po, int t0, int t1)
 msgFail(string tf, string dir, float sweep, int t1) =>
     '{"event":"fail","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
      '","tf":"' + tf + '","dir":"' + dir + '","sweep":' + str.tostring(sweep, format.mintick) +
-     ',"candle_close":' + str.tostring(t1) + ',"failed_at":' + str.tostring(time) + '}'
+     ',"candle_close":' + str.tostring(t1) + ',"failed_at":' + str.tostring(timenow) + '}'
 
 handle(TfState st, bool isNew, bool bull, bool bear, float lo, float hi, float c, float po, int t0, int t1) =>
     bool fired = false
@@ -90,8 +90,8 @@ handle(TfState st, bool isNew, bool bull, bool bear, float lo, float hi, float c
         alert(msgSignal(st.tf, st.dir, st.sweep, c, po, t0, t1), alert.freq_once_per_bar)
         fired := true
         firedDir := st.dir
-    // failure check on every chart bar, including the live one
-    if chartOk and st.dir != "none" and not st.failed and not (isNew and fired)
+    // failure check on every update of every chart bar, including the one the signal fired on
+    if chartOk and st.dir != "none" and not st.failed
         hit = st.dir == "bullish" ? low < st.sweep : high > st.sweep
         if hit
             st.failed := true
