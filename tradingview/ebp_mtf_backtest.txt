@@ -55,6 +55,8 @@ flatWeekend   = input.bool(false, "Flat over the weekend", group = grpX,
 
 grpD          = "Display"
 showTable     = input.bool(true, "Show results table", group = grpD)
+tablePos      = input.string("Bottom left", "Table position", options = ["Bottom left", "Bottom right", "Top left", "Top right", "Middle left", "Middle right"], group = grpD)
+tableSize     = input.string("Small", "Table text size", options = ["Tiny", "Small", "Normal"], group = grpD)
 showMarks     = input.bool(true, "Show signal markers", group = grpD)
 
 chartOk = timeframe.in_seconds() == 3600
@@ -528,46 +530,48 @@ inTrade = strategy.position_size != 0
 plot(inTrade ? activeStop : na, "Stop", color.red, 1, plot.style_linebr)
 plot(inTrade ? activeTarget : na, "Target", color.green, 1, plot.style_linebr)
 
+tsz = tableSize == "Tiny" ? size.tiny : tableSize == "Small" ? size.small : size.normal
 if barstate.islast
-    var table t = table.new(position.top_right, 7, 17, border_width = 1)
+    pos = tablePos == "Bottom left" ? position.bottom_left : tablePos == "Bottom right" ? position.bottom_right : tablePos == "Top left" ? position.top_left : tablePos == "Top right" ? position.top_right : tablePos == "Middle left" ? position.middle_left : position.middle_right
+    var table t = table.new(pos, 7, 17, border_width = 1, bgcolor = color.new(color.black, 20))
     if not chartOk
         t.cell(0, 0, "EBP BT: use a 1H chart", bgcolor = color.new(color.red, 20), text_color = color.white)
     else if showTable
         hdr = array.from("Group", "Trades", "Win %", "Avg R", "Total R", "Max DD (R)", "Expect.")
         for i = 0 to 6
-            t.cell(i, 0, hdr.get(i), bgcolor = color.new(color.gray, 50), text_color = color.white, text_size = size.small)
+            t.cell(i, 0, hdr.get(i), bgcolor = color.new(color.gray, 50), text_color = color.white, text_size = tsz)
         for g = 0 to 5
             n = gCount.get(g)
             w = gWins.get(g)
             sr = gSumR.get(g)
-            t.cell(0, g + 1, gNames.get(g), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-            t.cell(1, g + 1, str.tostring(n), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-            t.cell(2, g + 1, n > 0 ? str.tostring(100.0 * w / n, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-            t.cell(3, g + 1, n > 0 ? str.tostring(sr / n, "#.00") : "—", text_color = color.white, bgcolor = color.new(n > 0 and sr > 0 ? color.teal : color.gray, 60), text_size = size.small)
-            t.cell(4, g + 1, n > 0 ? str.tostring(sr, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-            t.cell(5, g + 1, n > 0 ? str.tostring(gMaxDD.get(g), "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-            t.cell(6, g + 1, n > 0 ? str.tostring(sr / n, "#.00") + "R/trade" : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(0, g + 1, gNames.get(g), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+            t.cell(1, g + 1, str.tostring(n), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+            t.cell(2, g + 1, n > 0 ? str.tostring(100.0 * w / n, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+            t.cell(3, g + 1, n > 0 ? str.tostring(sr / n, "#.00") : "—", text_color = color.white, bgcolor = color.new(n > 0 and sr > 0 ? color.teal : color.gray, 60), text_size = tsz)
+            t.cell(4, g + 1, n > 0 ? str.tostring(sr, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+            t.cell(5, g + 1, n > 0 ? str.tostring(gMaxDD.get(g), "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+            t.cell(6, g + 1, n > 0 ? str.tostring(sr / n, "#.00") + "R/trade" : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
         // qualified trades by supporting HTF
         t.merge_cells(0, 7, 6, 7)
-        t.cell(0, 7, "Qualified trades by supporting timeframe (a trade counts in every row that supported it)", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
+        t.cell(0, 7, "Qualified trades by supporting timeframe (a trade counts in every row that supported it)", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = tsz)
         for g = 0 to 6
             n = hCount.get(g)
             w = hWins.get(g)
             sr = hSumR.get(g)
-            t.cell(0, g + 8, hNames.get(g), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-            t.cell(1, g + 8, str.tostring(n), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-            t.cell(2, g + 8, n > 0 ? str.tostring(100.0 * w / n, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-            t.cell(3, g + 8, n > 0 ? str.tostring(sr / n, "#.00") : "—", text_color = color.white, bgcolor = color.new(n > 0 and sr > 0 ? color.teal : color.gray, 60), text_size = size.small)
-            t.cell(4, g + 8, n > 0 ? str.tostring(sr, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(0, g + 8, hNames.get(g), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+            t.cell(1, g + 8, str.tostring(n), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+            t.cell(2, g + 8, n > 0 ? str.tostring(100.0 * w / n, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+            t.cell(3, g + 8, n > 0 ? str.tostring(sr / n, "#.00") : "—", text_color = color.white, bgcolor = color.new(n > 0 and sr > 0 ? color.teal : color.gray, 60), text_size = tsz)
+            t.cell(4, g + 8, n > 0 ? str.tostring(sr, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
             t.merge_cells(5, g + 8, 6, g + 8)
             t.cell(5, g + 8, "", bgcolor = color.new(color.gray, 70))
         // current bias row
-        t.cell(0, 15, "Bias now", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
-        t.cell(1, 15, "M " + tfM.effBias() + (tfM.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-        t.cell(2, 15, "W " + tfW.effBias() + (tfW.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-        t.cell(3, 15, "3D " + tf3.effBias() + (tf3.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
-        t.cell(4, 15, "D " + tfD.effBias() + (tfD.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(0, 15, "Bias now", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = tsz)
+        t.cell(1, 15, "M " + tfM.effBias() + (tfM.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+        t.cell(2, 15, "W " + tfW.effBias() + (tfW.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+        t.cell(3, 15, "3D " + tf3.effBias() + (tf3.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
+        t.cell(4, 15, "D " + tfD.effBias() + (tfD.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
         t.merge_cells(5, 15, 6, 15)
         t.cell(5, 15, "", bgcolor = color.new(color.gray, 70))
         t.merge_cells(0, 16, 6, 16)
-        t.cell(0, 16, "Q = qualified · U = unqualified · R = risk units · trade list comments: tf|Q/U|side|risk pts|supporters (lower-case = EQ-flipped)", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(0, 16, "Q = qualified · U = unqualified · R = risk units · trade list comments: tf|Q/U|side|risk pts|supporters (lower-case = EQ-flipped)", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tsz)
