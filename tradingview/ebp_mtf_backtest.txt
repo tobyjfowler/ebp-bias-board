@@ -36,6 +36,14 @@ maxSwingR     = input.float(2.0, "Use swing if within (R)", minval = 0.1, step =
 swingLen      = input.int(1, "Swing: candles each side (1H)", minval = 1, group = grpT)
 allowReverse  = input.bool(false, "Allow reversal on opposite qualified signal", group = grpT)
 
+grpZ          = "Position sizing"
+sizeMode      = input.string("Fixed contracts", "Sizing", options = ["Fixed contracts", "Fixed $ risk"], group = grpZ,
+     tooltip = "Fixed $ risk: contracts = risk ÷ (stop distance × point value), rounded down. The R table is unaffected; this changes the money results in the Strategy Tester.")
+fixedQty      = input.int(1, "Contracts (fixed mode)", minval = 1, group = grpZ)
+riskUsd       = input.float(500, "Risk per trade ($)", minval = 1, group = grpZ)
+maxQty        = input.int(50, "Max contracts", minval = 1, group = grpZ)
+skipTooWide   = input.bool(true, "Skip trade if 1 contract exceeds $ risk", group = grpZ)
+
 grpX          = "Session filter"
 useSession    = input.bool(false, "Only enter inside session", group = grpX)
 sess          = input.session("0930-1600", "Session (New York)", group = grpX)
@@ -386,9 +394,17 @@ if beMode and pos != 0 and not beDone and not na(activeTrigger)
 
 rrFixed = targetMode == "1R" ? 1.0 : targetMode == "2R" ? 2.0 : targetMode == "3R" ? 3.0 : fallbackRR
 
+calcQty(float stopDist) =>
+    float q = fixedQty
+    if sizeMode == "Fixed $ risk"
+        perContract = stopDist * syminfo.pointvalue
+        raw = math.floor(riskUsd / perContract)
+        q := raw >= 1 ? math.min(raw, maxQty) : (skipTooWide ? 0.0 : 1.0)
+    q
+
 entryTag(string tf, bool q, string dir, float riskPts) => tf + "|" + (q ? "Q" : "U") + "|" + dir + "|" + str.tostring(riskPts, "#.##") + "|" + supporters(dir == "L" ? "bullish" : "bearish")
 
-if wantLong and sigSweep < close
+if wantLong and sigSweep < close and calcQty(close - sigSweep) > 0
     risk = close - sigSweep
     float targetPx = close + risk * rrFixed
     activeTrigger := na
@@ -402,12 +418,12 @@ if wantLong and sigSweep < close
         sw = nearestAbove(swingHighs, close)
         if not na(sw) and sw < targetPx
             activeTrigger := sw
-    strategy.entry("Long", strategy.long, comment = entryTag(sigTf, sigQ, "L", risk))
+    strategy.entry("Long", strategy.long, qty = calcQty(risk), comment = entryTag(sigTf, sigQ, "L", risk))
     strategy.exit("Long exit", "Long", stop = sigSweep, limit = targetPx, comment_profit = "TP", comment_loss = "SL")
     activeStop := sigSweep
     activeTarget := targetPx
     activeRisk := risk
-else if wantShort and sigSweep > close
+else if wantShort and sigSweep > close and calcQty(sigSweep - close) > 0
     risk = sigSweep - close
     float targetPx = close - risk * rrFixed
     activeTrigger := na
@@ -421,7 +437,7 @@ else if wantShort and sigSweep > close
         sw = nearestBelow(swingLows, close)
         if not na(sw) and sw > targetPx
             activeTrigger := sw
-    strategy.entry("Short", strategy.short, comment = entryTag(sigTf, sigQ, "S", risk))
+    strategy.entry("Short", strategy.short, qty = calcQty(risk), comment = entryTag(sigTf, sigQ, "S", risk))
     strategy.exit("Short exit", "Short", stop = sigSweep, limit = targetPx, comment_profit = "TP", comment_loss = "SL")
     activeStop := sigSweep
     activeTarget := targetPx
@@ -459,7 +475,8 @@ while seen < strategy.closedtrades
         gi = gNames.indexof(gname)
         riskPts = str.tonumber(parts.get(3))
         if gi >= 0 and not na(riskPts) and riskPts > 0
-            r = strategy.closedtrades.profit(seen) / (riskPts * syminfo.pointvalue)
+            qtyT = strategy.closedtrades.size(seen)
+            r = strategy.closedtrades.profit(seen) / (riskPts * syminfo.pointvalue * math.max(math.abs(qtyT), 1))
             gCount.set(gi, gCount.get(gi) + 1)
             if r > 0
                 gWins.set(gi, gWins.get(gi) + 1)
