@@ -41,8 +41,11 @@ sizeMode      = input.string("Fixed contracts", "Sizing", options = ["Fixed cont
      tooltip = "Fixed $ risk: contracts = risk ÷ (stop distance × point value), rounded down. The R table is unaffected; this changes the money results in the Strategy Tester.")
 fixedQty      = input.int(1, "Contracts (fixed mode)", minval = 1, group = grpZ)
 riskUsd       = input.float(500, "Risk per trade ($)", minval = 1, group = grpZ)
+riskRound     = input.string("Closest", "Contracts rounding", options = ["Closest", "Never exceed (round down)"], group = grpZ,
+     tooltip = "Closest: the number of contracts whose risk is nearest the $ figure (can be a little over). Never exceed: round down.")
 maxQty        = input.int(50, "Max contracts", minval = 1, group = grpZ)
-skipTooWide   = input.bool(true, "Skip trade if 1 contract exceeds $ risk", group = grpZ)
+skipTooWide   = input.bool(true, "Skip trade if 1 contract exceeds $ risk", group = grpZ,
+     tooltip = "Only applies to 'Never exceed'. With 'Closest', 1 contract is used whenever that is the closest.")
 
 grpX          = "Session filter"
 useSession    = input.bool(false, "Only enter inside session", group = grpX)
@@ -398,8 +401,12 @@ calcQty(float stopDist) =>
     float q = fixedQty
     if sizeMode == "Fixed $ risk"
         perContract = stopDist * syminfo.pointvalue
-        raw = math.floor(riskUsd / perContract)
-        q := raw >= 1 ? math.min(raw, maxQty) : (skipTooWide ? 0.0 : 1.0)
+        exact = riskUsd / perContract
+        if riskRound == "Closest"
+            q := math.min(math.max(math.round(exact), 1), maxQty)
+        else
+            raw = math.floor(exact)
+            q := raw >= 1 ? math.min(raw, maxQty) : (skipTooWide ? 0.0 : 1.0)
     q
 
 entryTag(string tf, bool q, string dir, float riskPts) => tf + "|" + (q ? "Q" : "U") + "|" + dir + "|" + str.tostring(riskPts, "#.##") + "|" + supporters(dir == "L" ? "bullish" : "bearish")
