@@ -1,0 +1,486 @@
+//@version=6
+strategy("EBP MTF Backtest", "EBP BT", overlay = true,
+     initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0, slippage = 0,
+     process_orders_on_close = true, margin_long = 0, margin_short = 0, pyramiding = 0,
+     calc_on_every_tick = false, max_labels_count = 500, max_lines_count = 500)
+
+// ─────────────────────────────────────────────────────────────
+// Run on a 1H chart. Rebuilds the live system: D/3D/W/M EBP biases from daily closes,
+// 6H/4H/1H EBP signals, qualification (any HTF whose effective bias matches), and the
+// equilibrium model (an opposite lower-TF EBP closing through an HTF EBP's midpoint flips it).
+// Entry at the signal candle's close, stop at its sweep level, target per the setting.
+// The table in the corner reports results per timeframe, split by qualified / unqualified.
+// ─────────────────────────────────────────────────────────────
+
+grpS          = "Signal rules"
+reqOpp        = input.bool(false, "Require opposite-colour prior candle", group = grpS)
+minSweepTicks = input.int(1, "Minimum sweep (ticks)", minval = 1, group = grpS)
+use6          = input.bool(true, "Trade 6H signals", group = grpS)
+use4          = input.bool(true, "Trade 4H signals", group = grpS)
+use1          = input.bool(true, "Trade 1H signals", group = grpS)
+tradeWhich    = input.string("Qualified only", "Trade which signals", options = ["Qualified only", "Unqualified only", "All"], group = grpS)
+
+grpQ          = "Bias model"
+useEq         = input.bool(true, "Equilibrium model (EQ violation flips bias)", group = grpQ)
+eq1h          = input.bool(true, "1H can violate the daily / 3-day EQ", group = grpQ)
+qualTfM       = input.bool(true, "Monthly can qualify", group = grpQ)
+qualTfW       = input.bool(true, "Weekly can qualify", group = grpQ)
+qualTf3       = input.bool(true, "3-Day can qualify", group = grpQ)
+qualTfD       = input.bool(true, "Daily can qualify", group = grpQ)
+
+grpT          = "Trade management"
+targetMode    = input.string("1R", "Target", options = ["1R", "2R", "3R", "Nearest swing (fallback R)", "BE at swing, TP fixed R"], group = grpT)
+fallbackRR    = input.float(1.0, "Fallback / fixed target (R)", minval = 0.1, step = 0.1, group = grpT)
+maxSwingR     = input.float(2.0, "Use swing if within (R)", minval = 0.1, step = 0.1, group = grpT)
+swingLen      = input.int(1, "Swing: candles each side (1H)", minval = 1, group = grpT)
+allowReverse  = input.bool(false, "Allow reversal on opposite qualified signal", group = grpT)
+
+grpX          = "Session filter"
+useSession    = input.bool(false, "Only enter inside session", group = grpX)
+sess          = input.session("0930-1600", "Session (New York)", group = grpX)
+
+grpD          = "Display"
+showTable     = input.bool(true, "Show results table", group = grpD)
+showMarks     = input.bool(true, "Show signal markers", group = grpD)
+
+chartOk = timeframe.in_seconds() == 3600
+tz = syminfo.timezone
+
+// ─────────────────────────────────────────────────────────────
+// EBP classification
+// ─────────────────────────────────────────────────────────────
+classify(float cO, float cH, float cL, float cC, float pO, float pH, float pL, float pC) =>
+    if na(pO)
+        "neutral"
+    else
+        bullSweep = math.round((pL - cL) / syminfo.mintick) >= minSweepTicks
+        bearSweep = math.round((cH - pH) / syminfo.mintick) >= minSweepTicks
+        if bullSweep and cC > pO and (not reqOpp or pC < pO)
+            "bullish"
+        else if bearSweep and cC < pO and (not reqOpp or pC > pO)
+            "bearish"
+        else
+            "neutral"
+
+// ─────────────────────────────────────────────────────────────
+// Higher-timeframe structures (built from daily closes, same rules as the live indicator)
+// ─────────────────────────────────────────────────────────────
+type Tf
+    string name
+    int   rank
+    int   curKey = na
+    float curO = na
+    float curH = na
+    float curL = na
+    float curC = na
+    int   curStart = na
+    int   curBars = 0
+    bool  finalized = false
+    float lastO = na
+    float lastH = na
+    float lastL = na
+    float lastC = na
+    float prevO = na
+    float prevH = na
+    float prevL = na
+    float prevC = na
+    int   lastBar = na        // chart bar index on which the last candle closed
+    string bias = "neutral"
+    float  sweep = na
+    bool   intact = true
+    // equilibrium model
+    bool   violated = false
+    float  violSweep = na
+    string violBy = ""
+
+method eq(Tf s) => (s.lastH + s.lastL) / 2
+
+method effBias(Tf s) =>
+    s.bias == "neutral" or not s.intact ? "neutral" : s.violated ? (s.bias == "bullish" ? "bearish" : "bullish") : s.bias
+
+method failLevel(Tf s) => s.violated ? s.violSweep : s.sweep
+
+method finalize(Tf s) =>
+    if not s.finalized and s.curBars > 0
+        s.prevO := s.lastO
+        s.prevH := s.lastH
+        s.prevL := s.lastL
+        s.prevC := s.lastC
+        s.lastO := s.curO
+        s.lastH := s.curH
+        s.lastL := s.curL
+        s.lastC := s.curC
+        s.lastBar := bar_index
+        s.bias := classify(s.lastO, s.lastH, s.lastL, s.lastC, s.prevO, s.prevH, s.prevL, s.prevC)
+        s.sweep := s.bias == "bullish" ? s.lastL : s.bias == "bearish" ? s.lastH : na
+        s.intact := true
+        s.violated := false
+        s.violSweep := na
+        s.violBy := ""
+        s.finalized := true
+
+method startPeriod(Tf s, int k) =>
+    s.curKey := k
+    s.curO := na
+    s.curH := na
+    s.curL := na
+    s.curC := na
+    s.curBars := 0
+    s.finalized := false
+
+method absorb(Tf s, float o, float h, float l, float c) =>
+    if s.curBars == 0
+        s.curO := o
+        s.curH := h
+        s.curL := l
+    else
+        s.curH := math.max(s.curH, h)
+        s.curL := math.min(s.curL, l)
+    s.curC := c
+    s.curBars += 1
+
+method rollIfNew(Tf s, int k) =>
+    if na(s.curKey) or k != s.curKey
+        if not na(s.curKey) and not s.finalized
+            s.finalize()
+        s.startPeriod(k)
+
+// price trading through levels: failure of the structure, or reclaim of a violated one
+method checkLevels(Tf s) =>
+    if s.bias != "neutral" and s.intact and not na(s.lastBar) and bar_index > s.lastBar
+        if s.violated
+            hitViol = s.bias == "bullish" ? high > s.violSweep : low < s.violSweep   // violator's level taken → reclaim
+            if hitViol
+                s.violated := false
+                s.violSweep := na
+        hitOwn = s.bias == "bullish" ? low < s.sweep : high > s.sweep
+        if hitOwn
+            s.intact := false
+
+// an EBP on a lower timeframe closed: does it violate or reclaim this structure's EQ?
+method applyEbp(Tf s, string dir, float cl, float sw, string byName) =>
+    bool changed = false
+    if useEq and s.bias != "neutral" and s.intact and not na(s.lastBar) and bar_index > s.lastBar
+        e = s.eq()
+        opp = s.bias == "bullish" ? "bearish" : "bullish"
+        through = dir == "bearish" ? cl < e : cl > e
+        if not s.violated and dir == opp and through
+            s.violated := true
+            s.violSweep := sw
+            s.violBy := byName
+            changed := true
+        else if s.violated and dir == s.bias and through
+            s.violated := false
+            s.violSweep := na
+            changed := true
+    changed
+
+var tfD = Tf.new("D", 4)
+var tf3 = Tf.new("3D", 5)
+var tfW = Tf.new("W", 6)
+var tfM = Tf.new("M", 7)
+
+// daily candle from the 1H chart: values are final on the 1H bar that completes the day
+[dO, dH, dL, dC, dTc] = request.security(syminfo.tickerid, "D", [open, high, low, close, time_close], lookahead = barmerge.lookahead_on)
+dayCloses = chartOk and time_close == dTc
+
+weekKey(int t) =>
+    dow = dayofweek(t, tz)
+    off = (dow - dayofweek.monday + 7) % 7
+    mon = t - off * 86400000
+    year(mon, tz) * 10000 + month(mon, tz) * 100 + dayofmonth(mon, tz)
+monthKey(int t) => year(t, tz) * 100 + month(t, tz)
+monthClosesToday(int t) =>
+    dow = dayofweek(t, tz)
+    nextWeekday = t + (dow == dayofweek.friday ? 3 : dow == dayofweek.saturday ? 2 : 1) * 86400000
+    month(nextWeekday, tz) != month(t, tz)
+
+var int dayCount = 0
+var int lastYear = na
+
+// ─────────────────────────────────────────────────────────────
+// Intraday candles (6H / 4H / 1H): final on the 1H bar that completes them
+// ─────────────────────────────────────────────────────────────
+itf(string res) =>
+    [o, h, l, c, tc, po, ph, pl, pc] = request.security(syminfo.tickerid, res, [open, high, low, close, time_close, open[1], high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
+    closes = chartOk and time_close == tc
+    b = closes ? classify(o, h, l, c, po, ph, pl, pc) : "neutral"
+    [closes, b, h, l, c]
+
+[c6, b6, h6, l6, cl6] = itf("360")
+[c4, b4, h4, l4, cl4] = itf("240")
+[c1, b1, h1, l1, cl1] = itf("60")
+
+// ─────────────────────────────────────────────────────────────
+// Qualification
+// ─────────────────────────────────────────────────────────────
+qualified(string dir) =>
+    (qualTfM and tfM.effBias() == dir) or (qualTfW and tfW.effBias() == dir) or (qualTf3 and tf3.effBias() == dir) or (qualTfD and tfD.effBias() == dir)
+
+inSession = not useSession or not na(time(timeframe.period, sess, "America/New_York"))
+
+// ─────────────────────────────────────────────────────────────
+// Per-bar processing (confirmed bars only; strategies run on bar close)
+// ─────────────────────────────────────────────────────────────
+// 1) level checks on the live bar's range (failures / reclaims)
+if chartOk
+    tfD.checkLevels()
+    tf3.checkLevels()
+    tfW.checkLevels()
+    tfM.checkLevels()
+
+// 2) daily close: absorb into HTF structures and declare closes
+if dayCloses
+    td = dTc
+    yearNow = year(td, tz)
+    countThisBar = (na(lastYear) or yearNow != lastYear) ? 1 : dayCount + 1
+    kD = int(td / 86400000)
+    k3 = yearNow * 1000 + math.floor((countThisBar - 1) / 3)
+    kW = weekKey(td)
+    kM = monthKey(td)
+    tfD.rollIfNew(kD)
+    tf3.rollIfNew(k3)
+    tfW.rollIfNew(kW)
+    tfM.rollIfNew(kM)
+    for s in array.from(tfD, tf3, tfW, tfM)
+        s.absorb(dO, dH, dL, dC)
+    dayCount := countThisBar
+    lastYear := yearNow
+    tfD.finalize()
+    if countThisBar % 3 == 0
+        tf3.finalize()
+    if dayofweek(td, tz) == dayofweek.friday
+        tfW.finalize()
+    if monthClosesToday(td)
+        tfM.finalize()
+    // newly closed HTF EBPs can violate higher structures (D → W/M, 3D → W/M, W → M)
+    if tfD.finalized and tfD.lastBar == bar_index and tfD.bias != "neutral"
+        tfW.applyEbp(tfD.bias, tfD.lastC, tfD.sweep, "D")
+        tfM.applyEbp(tfD.bias, tfD.lastC, tfD.sweep, "D")
+    if tf3.finalized and tf3.lastBar == bar_index and tf3.bias != "neutral"
+        tfW.applyEbp(tf3.bias, tf3.lastC, tf3.sweep, "3D")
+        tfM.applyEbp(tf3.bias, tf3.lastC, tf3.sweep, "3D")
+    if tfW.finalized and tfW.lastBar == bar_index and tfW.bias != "neutral"
+        tfM.applyEbp(tfW.bias, tfW.lastC, tfW.sweep, "W")
+
+// 3) intraday signals: EQ effects first (the violating signal qualifies itself), then qualification
+string sigTf = ""
+string sigDir = "neutral"
+float sigSweep = na
+bool sigQ = false
+
+handleIntraday(string name, bool closes, string b, float h, float l, float c, bool enabled, bool canViolate) =>
+    string outTf = ""
+    string outDir = "neutral"
+    float outSweep = na
+    bool outQ = false
+    if closes and b != "neutral"
+        sw = b == "bullish" ? l : h
+        if canViolate
+            tfD.applyEbp(b, c, sw, name)
+            tf3.applyEbp(b, c, sw, name)
+            if name != "1H"
+                tfW.applyEbp(b, c, sw, name)
+        if enabled
+            outTf := name
+            outDir := b
+            outSweep := sw
+            outQ := qualified(b)
+    [outTf, outDir, outSweep, outQ]
+
+[t6, d6, s6, q6] = handleIntraday("6H", c6, b6, h6, l6, cl6, use6, true)
+[t4, d4, s4, q4] = handleIntraday("4H", c4, b4, h4, l4, cl4, use4, true)
+[t1, d1, s1, q1] = handleIntraday("1H", c1, b1, h1, l1, cl1, use1, eq1h)
+
+// when several candles close on the same bar, prefer the higher timeframe's signal
+if t6 != ""
+    sigTf := t6
+    sigDir := d6
+    sigSweep := s6
+    sigQ := q6
+else if t4 != ""
+    sigTf := t4
+    sigDir := d4
+    sigSweep := s4
+    sigQ := q4
+else if t1 != ""
+    sigTf := t1
+    sigDir := d1
+    sigSweep := s1
+    sigQ := q1
+
+// ─────────────────────────────────────────────────────────────
+// Swings (chart timeframe) for the swing-target modes
+// ─────────────────────────────────────────────────────────────
+var array<float> swingHighs = array.new<float>()
+var array<float> swingLows  = array.new<float>()
+if swingHighs.size() > 0
+    for i = swingHighs.size() - 1 to 0
+        if high > swingHighs.get(i)
+            swingHighs.remove(i)
+if swingLows.size() > 0
+    for i = swingLows.size() - 1 to 0
+        if low < swingLows.get(i)
+            swingLows.remove(i)
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+if not na(ph)
+    swingHighs.push(ph)
+    if swingHighs.size() > 200
+        swingHighs.shift()
+if not na(pl)
+    swingLows.push(pl)
+    if swingLows.size() > 200
+        swingLows.shift()
+nearestAbove(array<float> arr, float px) =>
+    float best = na
+    for lvl in arr
+        if lvl > px and (na(best) or lvl < best)
+            best := lvl
+    best
+nearestBelow(array<float> arr, float px) =>
+    float best = na
+    for lvl in arr
+        if lvl < px and (na(best) or lvl > best)
+            best := lvl
+    best
+
+// ─────────────────────────────────────────────────────────────
+// Orders
+// ─────────────────────────────────────────────────────────────
+var float activeStop = na
+var float activeTarget = na
+var float activeTrigger = na
+var bool  beDone = false
+var float activeRisk = na
+beMode = targetMode == "BE at swing, TP fixed R"
+
+take = sigTf != "" and inSession and (tradeWhich == "All" or (tradeWhich == "Qualified only" and sigQ) or (tradeWhich == "Unqualified only" and not sigQ))
+pos = strategy.position_size
+wantLong  = take and sigDir == "bullish" and (pos == 0 or (allowReverse and pos < 0))
+wantShort = take and sigDir == "bearish" and (pos == 0 or (allowReverse and pos > 0))
+
+// breakeven management for the open trade
+if beMode and pos != 0 and not beDone and not na(activeTrigger)
+    if pos > 0 and high >= activeTrigger
+        activeStop := strategy.position_avg_price
+        beDone := true
+        strategy.exit("Long exit", "Long", stop = activeStop, limit = activeTarget, comment_profit = "TP", comment_loss = "BE")
+    else if pos < 0 and low <= activeTrigger
+        activeStop := strategy.position_avg_price
+        beDone := true
+        strategy.exit("Short exit", "Short", stop = activeStop, limit = activeTarget, comment_profit = "TP", comment_loss = "BE")
+
+rrFixed = targetMode == "1R" ? 1.0 : targetMode == "2R" ? 2.0 : targetMode == "3R" ? 3.0 : fallbackRR
+
+entryTag(string tf, bool q, string dir, float riskPts) => tf + "|" + (q ? "Q" : "U") + "|" + dir + "|" + str.tostring(riskPts, "#.##")
+
+if wantLong and sigSweep < close
+    risk = close - sigSweep
+    float targetPx = close + risk * rrFixed
+    activeTrigger := na
+    beDone := false
+    if targetMode == "Nearest swing (fallback R)"
+        sw = nearestAbove(swingHighs, close)
+        if not na(sw) and sw - close <= risk * maxSwingR
+            targetPx := sw
+    else if beMode
+        targetPx := close + risk * fallbackRR
+        sw = nearestAbove(swingHighs, close)
+        if not na(sw) and sw < targetPx
+            activeTrigger := sw
+    strategy.entry("Long", strategy.long, comment = entryTag(sigTf, sigQ, "L", risk))
+    strategy.exit("Long exit", "Long", stop = sigSweep, limit = targetPx, comment_profit = "TP", comment_loss = "SL")
+    activeStop := sigSweep
+    activeTarget := targetPx
+    activeRisk := risk
+else if wantShort and sigSweep > close
+    risk = sigSweep - close
+    float targetPx = close - risk * rrFixed
+    activeTrigger := na
+    beDone := false
+    if targetMode == "Nearest swing (fallback R)"
+        sw = nearestBelow(swingLows, close)
+        if not na(sw) and close - sw <= risk * maxSwingR
+            targetPx := sw
+    else if beMode
+        targetPx := close - risk * fallbackRR
+        sw = nearestBelow(swingLows, close)
+        if not na(sw) and sw > targetPx
+            activeTrigger := sw
+    strategy.entry("Short", strategy.short, comment = entryTag(sigTf, sigQ, "S", risk))
+    strategy.exit("Short exit", "Short", stop = sigSweep, limit = targetPx, comment_profit = "TP", comment_loss = "SL")
+    activeStop := sigSweep
+    activeTarget := targetPx
+    activeRisk := risk
+
+// ─────────────────────────────────────────────────────────────
+// Results per group (timeframe × qualified), in R
+// ─────────────────────────────────────────────────────────────
+var int seen = 0
+var array<string> gNames = array.from("6H|Q", "6H|U", "4H|Q", "4H|U", "1H|Q", "1H|U")
+var array<int>   gCount = array.new<int>(6, 0)
+var array<int>   gWins  = array.new<int>(6, 0)
+var array<float> gSumR  = array.new<float>(6, 0.0)
+var array<float> gMaxDD = array.new<float>(6, 0.0)
+var array<float> gCum   = array.new<float>(6, 0.0)
+var array<float> gPeak  = array.new<float>(6, 0.0)
+
+while seen < strategy.closedtrades
+    cmt = strategy.closedtrades.entry_comment(seen)
+    parts = str.split(cmt, "|")
+    if parts.size() >= 4
+        gname = parts.get(0) + "|" + parts.get(1)
+        gi = gNames.indexof(gname)
+        riskPts = str.tonumber(parts.get(3))
+        if gi >= 0 and not na(riskPts) and riskPts > 0
+            r = strategy.closedtrades.profit(seen) / (riskPts * syminfo.pointvalue)
+            gCount.set(gi, gCount.get(gi) + 1)
+            if r > 0
+                gWins.set(gi, gWins.get(gi) + 1)
+            gSumR.set(gi, gSumR.get(gi) + r)
+            cum = gCum.get(gi) + r
+            gCum.set(gi, cum)
+            gPeak.set(gi, math.max(gPeak.get(gi), cum))
+            gMaxDD.set(gi, math.max(gMaxDD.get(gi), gPeak.get(gi) - cum))
+    seen += 1
+
+// ─────────────────────────────────────────────────────────────
+// Visuals
+// ─────────────────────────────────────────────────────────────
+plotshape(showMarks and sigTf != "" and sigDir == "bullish" and sigQ, "Qualified bull", shape.triangleup, location.belowbar, color.teal, size = size.small)
+plotshape(showMarks and sigTf != "" and sigDir == "bearish" and sigQ, "Qualified bear", shape.triangledown, location.abovebar, color.red, size = size.small)
+plotshape(showMarks and sigTf != "" and sigDir == "bullish" and not sigQ, "Unqualified bull", shape.triangleup, location.belowbar, color.new(color.teal, 70), size = size.tiny)
+plotshape(showMarks and sigTf != "" and sigDir == "bearish" and not sigQ, "Unqualified bear", shape.triangledown, location.abovebar, color.new(color.red, 70), size = size.tiny)
+inTrade = strategy.position_size != 0
+plot(inTrade ? activeStop : na, "Stop", color.red, 1, plot.style_linebr)
+plot(inTrade ? activeTarget : na, "Target", color.green, 1, plot.style_linebr)
+
+if barstate.islast
+    var table t = table.new(position.top_right, 7, 8, border_width = 1)
+    if not chartOk
+        t.cell(0, 0, "EBP BT: use a 1H chart", bgcolor = color.new(color.red, 20), text_color = color.white)
+    else if showTable
+        hdr = array.from("Group", "Trades", "Win %", "Avg R", "Total R", "Max DD (R)", "Expect.")
+        for i = 0 to 6
+            t.cell(i, 0, hdr.get(i), bgcolor = color.new(color.gray, 50), text_color = color.white, text_size = size.small)
+        for g = 0 to 5
+            n = gCount.get(g)
+            w = gWins.get(g)
+            sr = gSumR.get(g)
+            t.cell(0, g + 1, gNames.get(g), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(1, g + 1, str.tostring(n), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(2, g + 1, n > 0 ? str.tostring(100.0 * w / n, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(3, g + 1, n > 0 ? str.tostring(sr / n, "#.00") : "—", text_color = color.white, bgcolor = color.new(n > 0 and sr > 0 ? color.teal : color.gray, 60), text_size = size.small)
+            t.cell(4, g + 1, n > 0 ? str.tostring(sr, "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(5, g + 1, n > 0 ? str.tostring(gMaxDD.get(g), "#.0") : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+            t.cell(6, g + 1, n > 0 ? str.tostring(sr / n, "#.00") + "R/trade" : "—", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        // current bias row
+        t.cell(0, 7, "Bias now", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
+        t.cell(1, 7, "M " + tfM.effBias() + (tfM.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(2, 7, "W " + tfW.effBias() + (tfW.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(3, 7, "3D " + tf3.effBias() + (tf3.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.cell(4, 7, "D " + tfD.effBias() + (tfD.violated ? " (EQ)" : ""), text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
+        t.merge_cells(5, 7, 6, 7)
+        t.cell(5, 7, "Q = qualified · U = unqualified · R = risk units", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = size.small)
