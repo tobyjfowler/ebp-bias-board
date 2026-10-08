@@ -537,13 +537,10 @@ var table t = table.new(tablePosition, 7, 17, border_width = 1, bgcolor = color.
 cellHead(int c, int r, string txt) => table.cell(t, c, r, txt, text_color = color.white, bgcolor = color.new(color.gray, 40), text_size = tsz)
 cellTxt(int c, int r, string txt, color bg) => table.cell(t, c, r, txt, text_color = color.white, bgcolor = bg, text_size = tsz)
 
-// ── diagnostics: three independent last-bar drawings ──
-var table probe = table.new(position.top_center, 1, 1)
-if barstate.islast
-    label.new(bar_index, high, "EBP BT last bar · closed trades: " + str.tostring(strategy.closedtrades), style = label.style_label_down, color = color.orange, textcolor = color.black)
-    table.cell(probe, 0, 0, "probe table OK", text_color = color.white, bgcolor = color.new(color.orange, 20))
-
-if barstate.islast and showTable
+// The strategy only calculates on bar close, so the live bar may not have been processed yet:
+// draw on the last completed bar as well as the last bar.
+drawNow = barstate.islast or barstate.islastconfirmedhistory
+if drawNow and showTable
     grey = color.new(color.gray, 70)
     if not chartOk
         cellHead(0, 0, "EBP BT: use a 1H chart")
