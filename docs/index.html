@@ -3,7 +3,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>
-  /* Layout: one grid, assets down, timeframes across. Phone: each asset becomes a 2×2 card. Dark-first, like a chart. */
+  /* Layout: one card per asset (2×2 timeframe grid + intraday strip) at every width. Dark-first, like a chart. */
   :root {
     --bg: #0f1216;
     --panel: #161a20;
@@ -48,9 +48,10 @@
   .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-bottom: 16px; align-items: center; }
   .legend .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
 
-  /* Desktop grid */
-  .board { display: grid; grid-template-columns: minmax(150px, 1.1fr) repeat(4, minmax(130px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .board > div { background: var(--panel); padding: 10px 12px; min-width: 0; }
+  /* Cards at every width: one column when narrow, two side by side when there is room */
+  .board { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 1000px) { .board { grid-template-columns: 1fr 1fr; align-items: start; } }
+  .board > .head { display: none; }
   .head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
   .asset { display: flex; flex-direction: column; gap: 2px; justify-content: center; }
   .asset .sym { font-size: 18px; font-weight: 700; }
@@ -83,10 +84,8 @@
   .sub .forming { font-weight: 600; }
   .sub .forming.bullish { color: var(--bull); } .sub .forming.bearish { color: var(--bear); }
 
-  .tfhead .range { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--muted); margin-top: 2px; }
-
   /* Intraday strip (6H / 4H / 1H) under each asset */
-  .intraday { grid-column: 1 / -1; display: grid; grid-template-columns: auto repeat(3, minmax(0, 1fr)); gap: 0 18px; align-items: start; padding: 8px 12px !important; border-top: 1px dashed var(--line); }
+  .intraday { display: grid; align-items: start; border-top: 1px dashed var(--line); }
   .intraday .ilabel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; white-space: nowrap; }
   .isig { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 12px; }
   .isig .itf { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 2.2em; flex: none; }
@@ -105,53 +104,21 @@
   .toggle input { accent-color: var(--fg); }
   .relay-note { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
   .isig .q .qmark { display: none; }
-  @media (max-width: 720px) {
-    .intraday { grid-template-columns: 1fr; gap: 6px; padding: 10px 14px !important; }
-    .intraday .ilabel { margin-bottom: 2px; }
-  }
-  /* Desktop: one tidy row per asset — each signal on a single line, same width, no wrapping, no separate tag row */
-  @media (min-width: 721px) {
-    .intraday { align-items: center; gap: 0 20px; padding: 7px 12px !important; }
-    .intraday .ilabel { width: 62px; }
-    .isig { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; gap: 7px; }
-    .isig .itf { width: 2em; }
-    .isig .pill { min-width: 50px; justify-content: center; }
-    .isig .meta { display: block; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .isig .q { flex: none; }
-    .isig .q.yes { background: transparent; color: var(--fg); border: 1px solid var(--line); }
-    .isig .q.no { display: none; }
-    .isig .q.yes { padding: 1px 5px; }
-    .isig .q.yes .qfull { display: none; }
-    .isig .q.yes .qmark { display: inline; }
-    .isig .q.flip { padding: 1px 5px; }
-    .isig .q.flip .qfull { display: none; }
-    .isig .q.flip .qmark { display: inline; }
-    .pill.failed .lbl { text-decoration: none; }
-    .isig.unq { opacity: 0.38; }
-    .cell { min-height: 112px; }
-  }
+  .intraday { grid-template-columns: 1fr; gap: 6px; padding: 10px 14px; }
+  .intraday .ilabel { margin-bottom: 2px; }
 
   footer { margin-top: 18px; font-size: 12px; color: var(--muted); max-width: 65ch; }
   footer p { margin: 6px 0; }
 
-  @media (max-width: 720px) {
-    .board { display: flex; flex-direction: column; gap: 10px; background: transparent; border: 0; border-radius: 0; overflow: visible; }
-    .board > .head { display: none; }
-    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-    .card .asset { padding: 12px 14px 8px; border-bottom: 1px solid var(--line); flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-    .card .asset .px { margin: 0 0 0 auto; }
-    .card .asset .align { width: 100%; margin-top: 2px; }
-    .cells { display: grid; grid-template-columns: 1fr 1fr; }
-    .cells .cell { padding: 10px 14px; border-bottom: 1px solid var(--line); }
-    .cells .cell:nth-child(odd) { border-right: 1px solid var(--line); }
-    .cells .cell:nth-last-child(-n+2) { border-bottom: 0; }
-    .cell .tf { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
-  }
-  @media (min-width: 721px) {
-    .card { display: contents; }
-    .cells { display: contents; }
-    .cell .tf { display: none; }
-  }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .card .asset { padding: 12px 14px 8px; border-bottom: 1px solid var(--line); flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .card .asset .px { margin: 0 0 0 auto; }
+  .card .asset .align { width: 100%; margin-top: 2px; }
+  .cells { display: grid; grid-template-columns: 1fr 1fr; }
+  .cells .cell { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .cells .cell:nth-child(odd) { border-right: 1px solid var(--line); }
+  .cells .cell:nth-last-child(-n+2) { border-bottom: 0; }
+  .cell .tf { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
   @media (prefers-reduced-motion: no-preference) { .pill { transition: background 0.2s; } }
 </style>
 
@@ -330,7 +297,7 @@
     document.getElementById("banner").hidden = !data.sample;
     document.getElementById("gen").textContent = data.newest ? "updated " + fmtDate(data.newest) : "waiting for first update";
     const board = document.getElementById("board");
-    let html = `<div class="head">Asset</div>` + TF_ORDER.map(tf => `<div class="head tfhead">${TF_SHORT[tf]}</div>`).join("");
+    let html = "";
     const latestTradeDate = data.assets.map(a => a.trade_date).filter(Boolean).sort().pop() || "";
     for (const a of data.assets) {
       const dec = decimalsFor(a.key);
