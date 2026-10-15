@@ -104,9 +104,31 @@
   .toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
   .toggle input { accent-color: var(--fg); }
   .relay-note { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+  .isig .q .qmark { display: none; }
   @media (max-width: 720px) {
     .intraday { grid-template-columns: 1fr; gap: 6px; padding: 10px 14px !important; }
     .intraday .ilabel { margin-bottom: 2px; }
+  }
+  /* Desktop: one tidy row per asset — each signal on a single line, same width, no wrapping, no separate tag row */
+  @media (min-width: 721px) {
+    .intraday { align-items: center; gap: 0 20px; padding: 7px 12px !important; }
+    .intraday .ilabel { width: 62px; }
+    .isig { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; gap: 7px; }
+    .isig .itf { width: 2em; }
+    .isig .pill { min-width: 50px; justify-content: center; }
+    .isig .meta { display: block; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .isig .q { flex: none; }
+    .isig .q.yes { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+    .isig .q.no { display: none; }
+    .isig .q.yes { padding: 1px 5px; }
+    .isig .q.yes .qfull { display: none; }
+    .isig .q.yes .qmark { display: inline; }
+    .isig .q.flip { padding: 1px 5px; }
+    .isig .q.flip .qfull { display: none; }
+    .isig .q.flip .qmark { display: inline; }
+    .pill.failed .lbl { text-decoration: none; }
+    .isig.unq { opacity: 0.38; }
+    .cell { min-height: 112px; }
   }
 
   footer { margin-top: 18px; font-size: 12px; color: var(--muted); max-width: 65ch; }
@@ -215,7 +237,7 @@
     const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
     if (m < 60) return m + "m ago";
     const h = Math.floor(m / 60);
-    if (h < 48) return h + "h " + (m % 60) + "m ago";
+    if (h < 48) return h + "h ago";
     return Math.floor(h / 24) + "d ago";
   }
 
@@ -234,9 +256,9 @@
       return `<div class="isig ${q ? "" : "unq"}">
         <span class="itf">${tf}</span>
         <span class="pill ${s.dir} ${s.failed ? "failed" : ""}"><span class="lbl">${label}</span></span>
-        <span class="meta">${ago(s.candle_close)} · ${lvl}</span>
-        <span class="q ${q ? "yes" : "no"}">${q ? "qualified" : "unqualified"}</span>
-        ${s.flips && s.flips.length ? `<span class="q flip">⚠ flipped ${s.flips.map(x => TF_SHORT[x]).join("/")}</span>` : ""}
+        <span class="meta">${lvl} · ${ago(s.candle_close)}</span>
+        <span class="q ${q ? "yes" : "no"}" title="${q ? "qualified: a higher timeframe agrees" : "unqualified: no higher timeframe agrees"}"><span class="qfull">${q ? "qualified" : "unqualified"}</span><span class="qmark">✓</span></span>
+        ${s.flips && s.flips.length ? `<span class="q flip" title="EQ-flipped the ${s.flips.map(x => TF_SHORT[x]).join(" and ")} bias">⚠ <span class="qfull">flipped ${s.flips.map(x => TF_SHORT[x]).join("/")}</span><span class="qmark">${s.flips.join("/")}</span></span>` : ""}
       </div>`;
     }).join("");
     return `<div class="intraday"><span class="ilabel">Intraday</span>${cells}</div>`;
