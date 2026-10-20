@@ -7,12 +7,14 @@ indicator("EBP Bias Lifecycle — prototype", "EBP Life", overlay = true, max_li
 // An EBP opens a bias. The bias then LIVES until one of these ends it:
 //   ✖ failed     price trades through the EBP's sweep level (fixed, never moves)
 //   ↩ reclaimed  a candle CLOSES back through the EBP's EQ (50% of its range)
+//   ⤴ broken     a candle CLOSES beyond the reference candle's range (the EBP, or the latest
+//                continuation candle — the reference ratchets forward with each continuation)
 //   ⇄ superseded a new EBP replaces it (opposite direction always; same direction per input)
 // While it lives:
 //   T1 / T2      swing staircase to the LEFT of the EBP: T1 = first pivot below the EBP low (walking
 //                back in time), T2 = first pivot below T1 (1-bar pivots by default)
 //   stage        fresh → extended (T1 hit) → complete (T2 hit)   ← this is what grades intraday signals
-//   ▼ / ▲ cont.  a candle closing beyond the EBP's extreme (strength flag, not a bias change)
+//   ▼ / ▲ cont.  a candle closing beyond the reference's extreme (becomes the new reference)
 // ─────────────────────────────────────────────────────────────
 
 grpS          = "EBP rules"
@@ -23,6 +25,8 @@ grpL        = "Lifecycle"
 sameDirMode = input.string("Restart", "Same-direction EBP while active", options = ["Restart", "Keep original"], group = grpL,
      tooltip = "Restart: a new EBP in the same direction starts a fresh bias with new sweep / EQ / targets. Keep original: the first EBP keeps running; the new one is just marked.")
 hitMode     = input.string("Touch (wick)", "Target counts as hit on", options = ["Touch (wick)", "Close"], group = grpL)
+breakLevel  = input.string("High / low", "Continuation broken by a close beyond the reference candle's", options = ["High / low", "Open (body)", "Off"], group = grpL,
+     tooltip = "The reference candle is the EBP, then each continuation candle in turn (a close beyond the previous reference's extreme). A close back beyond the reference's high (bearish) / low (bullish) ends the bias as 'broken'. Off = original behaviour (only sweep / EQ end it).")
 
 grpT      = "Targets"
 pivN      = input.int(1, "Pivot strength (bars each side)", minval = 1, group = grpT, tooltip = "1 = three-candle pattern, middle candle is the extreme.")
@@ -121,17 +125,23 @@ type Bias
     int    t1Time = na
     int    t2Time = na
     int    contCloses = 0
-    string state = "active"        // active | failed | reclaimed | superseded
+    float  refH
+    float  refL
+    float  refO
+    int    refTime
+    string state = "active"        // active | failed | reclaimed | broken | superseded
     int    endTime = na
     line   lnSweep = na
     line   lnEq = na
     line   lnT1 = na
     line   lnT2 = na
+    line   lnRef = na
 
 var Bias cur = na
 
 method isBear(Bias b) => b.dir == "bearish"
 method col(Bias b) => b.isBear() ? colBear : colBull
+method breakPx(Bias b) => breakLevel == "Open (body)" ? b.refO : (b.isBear() ? b.refH : b.refL)
 method stage(Bias b) => b.t2Hit ? "complete" : b.t1Hit ? (na(b.t2) ? "complete" : "extended") : "fresh"
 
 method extendLines(Bias b) =>
@@ -143,6 +153,8 @@ method extendLines(Bias b) =>
         b.lnT1.set_x2(bar_index)
     if not na(b.lnT2) and not b.t2Hit
         b.lnT2.set_x2(bar_index)
+    if not na(b.lnRef)
+        b.lnRef.set_x2(bar_index)
 
 method endBias(Bias b, string how, string note) =>
     b.state := how
@@ -152,7 +164,9 @@ method endBias(Bias b, string how, string note) =>
         b.lnT1.set_color(color.new(colTgt, 75))
     if not na(b.lnT2) and not b.t2Hit
         b.lnT2.set_color(color.new(colTgt, 75))
-    txt = how == "failed" ? "✖ failed" : how == "reclaimed" ? "↩ reclaimed" : "⇄ superseded"
+    if not na(b.lnRef)
+        b.lnRef.set_x2(bar_index)
+    txt = how == "failed" ? "✖ failed" : how == "reclaimed" ? "↩ reclaimed" : how == "broken" ? (b.isBear() ? "⤴ broken" : "⤵ broken") : "⇄ superseded"
     label.new(bar_index, b.isBear() ? high : low, txt + (note != "" ? "\n" + note : ""),
          style = b.isBear() ? label.style_label_down : label.style_label_up,
          color = color.new(how == "superseded" ? color.gray : b.col(), 20), textcolor = color.white, size = size.small)
@@ -161,6 +175,10 @@ newBias(string dir) =>
     b = Bias.new(dir, bar_index, time, open, high, low, close)
     b.sweep := dir == "bearish" ? high : low
     b.eq := (high + low) / 2
+    b.refH := high
+    b.refL := low
+    b.refO := open
+    b.refTime := time
     [t1, t2] = findTargets(dir, dir == "bearish" ? low : high, bar_index)
     b.t1 := t1
     b.t2 := t2
@@ -214,15 +232,26 @@ if barstate.isconfirmed
                     cur.lnT2.set_x2(bar_index)
                     cur.lnT2.set_width(2)
                 label.new(bar_index, cur.t2, "T2 ✓ complete", style = bear ? label.style_label_up : label.style_label_down, color = color.new(colTgt, 10), textcolor = color.black, size = size.small)
-            cont = bear ? close < cur.l : close > cur.h
-            if cont
-                cur.contCloses := cur.contCloses + 1
-                if showCont
-                    label.new(bar_index, bear ? high : low, bear ? "▼" : "▲", style = bear ? label.style_label_down : label.style_label_up, color = color.new(cur.col(), 60), textcolor = color.white, size = size.tiny)
+            broken = breakLevel != "Off" and cur.contCloses > 0 and (bear ? close > cur.breakPx() : close < cur.breakPx())
             reclaimed = bear ? close > cur.eq : close < cur.eq
             if reclaimed
                 cur.endBias("reclaimed", "close through EQ " + px(cur.eq))
+            else if broken
+                cur.endBias("broken", "close " + (bear ? "above" : "below") + " " + dstr(cur.refTime) + " " + (breakLevel == "Open (body)" ? "open" : bear ? "high" : "low") + " " + px(cur.breakPx()))
             else
+                cont = bear ? close < cur.refL : close > cur.refH
+                if cont
+                    cur.contCloses := cur.contCloses + 1
+                    cur.refH := high
+                    cur.refL := low
+                    cur.refO := open
+                    cur.refTime := time
+                    if showLines and breakLevel != "Off"
+                        if not na(cur.lnRef)
+                            cur.lnRef.set_x2(bar_index)
+                        cur.lnRef := line.new(bar_index, cur.breakPx(), bar_index + 1, cur.breakPx(), color = color.new(cur.col(), 40), style = line.style_dotted, width = 2)
+                    if showCont
+                        label.new(bar_index, bear ? high : low, bear ? "▼" : "▲", style = bear ? label.style_label_down : label.style_label_up, color = color.new(cur.col(), 60), textcolor = color.white, size = size.tiny)
                 cur.extendLines()
 
     // 3) is this bar itself an EBP?
@@ -244,7 +273,7 @@ row(table t, int r, string k, string v, color bg) =>
     t.cell(1, r, v, text_color = color.white, bgcolor = bg, text_halign = text.align_left, text_size = size.small)
 
 if barstate.islast and showTable
-    var table t = table.new(position.top_right, 2, 9, border_width = 1)
+    var table t = table.new(position.top_right, 2, 10, border_width = 1)
     if na(cur) or cur.state != "active"
         row(t, 0, "Daily bias", "neutral" + (na(cur) ? "" : " (" + cur.state + " " + dstr(cur.endTime) + ")"), color.new(color.gray, 40))
     else
@@ -258,25 +287,28 @@ if barstate.islast and showTable
         row(t, 3, "EQ", px(cur.eq) + "  " + (bear ? "+" : "−") + px(math.abs(cur.eq - close)), color.new(c, 70))
         t1s = na(cur.t1) ? "—" : cur.t1Hit ? px(cur.t1) + "  ✓ " + dstr(cur.t1Time) : px(cur.t1) + "  " + px(math.abs(close - cur.t1)) + " away"
         t2s = na(cur.t2) ? "—" : cur.t2Hit ? px(cur.t2) + "  ✓ " + dstr(cur.t2Time) : px(cur.t2) + "  " + px(math.abs(close - cur.t2)) + " away"
-        row(t, 4, "T1", t1s, color.new(c, 70))
-        row(t, 5, "T2", t2s, color.new(c, 70))
+        row(t, 4, "Reference", cur.contCloses == 0 ? "EBP candle" : dstr(cur.refTime) + " · breaks on close " + (bear ? "above " : "below ") + px(cur.breakPx()), color.new(c, 70))
+        row(t, 5, "T1", t1s, color.new(c, 70))
+        row(t, 6, "T2", t2s, color.new(c, 70))
         grade = stg == "fresh" ? "QUALIFIED" : stg == "extended" ? "QUALIFIED · extended" : "QUALIFIED · complete"
-        row(t, 6, "Intraday " + (bear ? "shorts" : "longs"), grade, color.new(c, 40))
+        row(t, 7, "Intraday " + (bear ? "shorts" : "longs"), grade, color.new(c, 40))
         // live preview of the forming bar (not yet applied)
         string pv = ""
         if barstate.isrealtime and not barstate.isconfirmed
             if bear ? high > cur.sweep : low < cur.sweep
                 pv := "⚠ traded through fail level"
             else if bear ? close > cur.eq : close < cur.eq
-                pv := "⚠ closing above EQ → would reclaim"
+                pv := "⚠ closing through EQ → would reclaim"
+            else if breakLevel != "Off" and cur.contCloses > 0 and (bear ? close > cur.breakPx() : close < cur.breakPx())
+                pv := "⚠ closing beyond reference → would break"
             else
                 hp = hitMode == "Close" ? close : (bear ? low : high)
                 if not cur.t2Hit and not na(cur.t2) and (bear ? hp <= cur.t2 : hp >= cur.t2)
                     pv := "T2 reached"
                 else if not cur.t1Hit and not na(cur.t1) and (bear ? hp <= cur.t1 : hp >= cur.t1)
                     pv := "T1 reached"
-                else if bear ? close < cur.l : close > cur.h
-                    pv := "continuation (closing beyond EBP " + (bear ? "low" : "high") + ")"
+                else if bear ? close < cur.refL : close > cur.refH
+                    pv := "continuation (closing beyond reference " + (bear ? "low" : "high") + ")"
                 else
                     pv := "holding"
-        row(t, 7, "Today so far", pv == "" ? "—" : pv, color.new(color.gray, 60))
+        row(t, 8, "Today so far", pv == "" ? "—" : pv, color.new(color.gray, 60))
