@@ -1,0 +1,301 @@
+//@version=6
+indicator("EBP Bias Lifecycle — prototype", "EBP Life", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────────────────────────────────────
+// PROTOTYPE — nothing is sent anywhere. Put it on a DAILY chart (NQ, ES…) and scroll back.
+//
+// An EBP opens a bias. The bias then LIVES until one of these ends it:
+//   ✖ failed     price trades through the EBP's sweep level (fixed, never moves)
+//   ↩ reclaimed  a candle CLOSES back through the EBP's EQ (50% of its range)
+//   ⇄ superseded a new EBP replaces it (opposite direction always; same direction per input)
+// While it lives:
+//   T1 / T2      swing targets found to the LEFT of the EBP (1-bar pivots by default)
+//   stage        fresh → extended (T1 hit) → complete (T2 hit)   ← this is what grades intraday signals
+//   ▼ / ▲ cont.  a candle closing beyond the EBP's extreme (strength flag, not a bias change)
+// ─────────────────────────────────────────────────────────────
+
+grpS          = "EBP rules"
+reqOpp        = input.bool(false, "Require opposite-colour prior candle", group = grpS)
+minSweepTicks = input.int(1, "Minimum sweep (ticks)", minval = 1, group = grpS)
+
+grpL        = "Lifecycle"
+sameDirMode = input.string("Restart", "Same-direction EBP while active", options = ["Restart", "Keep original"], group = grpL,
+     tooltip = "Restart: a new EBP in the same direction starts a fresh bias with new sweep / EQ / targets. Keep original: the first EBP keeps running; the new one is just marked.")
+hitMode     = input.string("Touch (wick)", "Target counts as hit on", options = ["Touch (wick)", "Close"], group = grpL)
+
+grpT      = "Targets"
+pivN      = input.int(1, "Pivot strength (bars each side)", minval = 1, group = grpT, tooltip = "1 = three-candle pattern, middle candle is the extreme.")
+lookback  = input.int(250, "Look back this many bars for swings", minval = 20, group = grpT)
+mergePct  = input.float(0.25, "Merge swings within (% of price)", minval = 0, step = 0.05, group = grpT,
+     tooltip = "Pivots this close together are treated as one level (the furthest one). Stops T1 and T2 landing on near-identical lows.")
+
+grpD       = "Display"
+showLines  = input.bool(true, "Draw sweep / EQ / target lines", group = grpD)
+showCont   = input.bool(true, "Mark continuation closes", group = grpD)
+showTable  = input.bool(true, "Show status table", group = grpD)
+
+tz = syminfo.timezone
+dstr(int t) => str.format_time(t, "d MMM", tz)
+px(float v) => str.tostring(v, format.mintick)
+
+colBull = color.teal
+colBear = color.red
+colTgt  = #4fc3f7
+colEq   = color.gray
+
+// ─────────────────────────────────────────────────────────────
+// EBP classifier (same as the live indicator)
+// ─────────────────────────────────────────────────────────────
+classify(float cO, float cH, float cL, float cC, float pO, float pH, float pL, float pC) =>
+    if na(pO)
+        "neutral"
+    else
+        bullSweep = math.round((pL - cL) / syminfo.mintick) >= minSweepTicks
+        bearSweep = math.round((cH - pH) / syminfo.mintick) >= minSweepTicks
+        if bullSweep and cC > pO and (not reqOpp or pC < pO)
+            "bullish"
+        else if bearSweep and cC < pO and (not reqOpp or pC > pO)
+            "bearish"
+        else
+            "neutral"
+
+// ─────────────────────────────────────────────────────────────
+// Swing points (confirmed pivots, kept in arrays)
+// ─────────────────────────────────────────────────────────────
+var pivLoP = array.new<float>()
+var pivLoB = array.new<int>()
+var pivHiP = array.new<float>()
+var pivHiB = array.new<int>()
+
+isPivLow() =>
+    ok = bar_index >= 2 * pivN
+    for i = 1 to pivN
+        ok := ok and low[pivN] < low[pivN + i] and low[pivN] < low[pivN - i]
+    ok
+
+isPivHigh() =>
+    ok = bar_index >= 2 * pivN
+    for i = 1 to pivN
+        ok := ok and high[pivN] > high[pivN + i] and high[pivN] > high[pivN - i]
+    ok
+
+// Nearest two swing levels beyond the EBP's extreme, scanning left of bar B, clustered.
+findTargets(string dir, float ref, float extreme, int B) =>
+    bear = dir == "bearish"
+    src  = bear ? pivLoP : pivHiP
+    srcB = bear ? pivLoB : pivHiB
+    cands = array.new<float>()
+    if src.size() > 0
+        for i = src.size() - 1 to 0
+            b = srcB.get(i)
+            if B - b > lookback
+                break
+            if b < B
+                p = src.get(i)
+                if bear ? p < extreme : p > extreme
+                    cands.push(p)
+    if bear
+        cands.sort(order.descending)
+    else
+        cands.sort(order.ascending)
+    float t1 = na
+    float t2 = na
+    float cur = na
+    tol = ref * mergePct / 100
+    for p in cands
+        if na(cur)
+            cur := p
+        else if math.abs(p - cur) <= tol
+            cur := bear ? math.min(cur, p) : math.max(cur, p)
+        else
+            if na(t1)
+                t1 := cur
+            else if na(t2)
+                t2 := cur
+            cur := p
+    if not na(cur)
+        if na(t1)
+            t1 := cur
+        else if na(t2)
+            t2 := cur
+    [t1, t2]
+
+// ─────────────────────────────────────────────────────────────
+// Bias object
+// ─────────────────────────────────────────────────────────────
+type Bias
+    string dir
+    int    startBar
+    int    startTime
+    float  o
+    float  h
+    float  l
+    float  c
+    float  sweep
+    float  eq
+    float  t1
+    float  t2
+    bool   t1Hit = false
+    bool   t2Hit = false
+    int    t1Time = na
+    int    t2Time = na
+    int    contCloses = 0
+    string state = "active"        // active | failed | reclaimed | superseded
+    int    endTime = na
+    line   lnSweep = na
+    line   lnEq = na
+    line   lnT1 = na
+    line   lnT2 = na
+
+var Bias cur = na
+
+method isBear(Bias b) => b.dir == "bearish"
+method col(Bias b) => b.isBear() ? colBear : colBull
+method stage(Bias b) => b.t2Hit ? "complete" : b.t1Hit ? (na(b.t2) ? "complete" : "extended") : "fresh"
+
+method extendLines(Bias b) =>
+    if not na(b.lnSweep)
+        b.lnSweep.set_x2(bar_index)
+    if not na(b.lnEq)
+        b.lnEq.set_x2(bar_index)
+    if not na(b.lnT1) and not b.t1Hit
+        b.lnT1.set_x2(bar_index)
+    if not na(b.lnT2) and not b.t2Hit
+        b.lnT2.set_x2(bar_index)
+
+method endBias(Bias b, string how, string note) =>
+    b.state := how
+    b.endTime := time
+    b.extendLines()
+    if not na(b.lnT1) and not b.t1Hit
+        b.lnT1.set_color(color.new(colTgt, 75))
+    if not na(b.lnT2) and not b.t2Hit
+        b.lnT2.set_color(color.new(colTgt, 75))
+    txt = how == "failed" ? "✖ failed" : how == "reclaimed" ? "↩ reclaimed" : "⇄ superseded"
+    label.new(bar_index, b.isBear() ? high : low, txt + (note != "" ? "\n" + note : ""),
+         style = b.isBear() ? label.style_label_down : label.style_label_up,
+         color = color.new(how == "superseded" ? color.gray : b.col(), 20), textcolor = color.white, size = size.small)
+
+newBias(string dir) =>
+    b = Bias.new(dir, bar_index, time, open, high, low, close)
+    b.sweep := dir == "bearish" ? high : low
+    b.eq := (high + low) / 2
+    [t1, t2] = findTargets(dir, close, dir == "bearish" ? low : high, bar_index)
+    b.t1 := t1
+    b.t2 := t2
+    c = b.col()
+    if showLines
+        b.lnSweep := line.new(bar_index, b.sweep, bar_index + 1, b.sweep, color = c, style = line.style_dashed, width = 1)
+        b.lnEq := line.new(bar_index, b.eq, bar_index + 1, b.eq, color = color.new(colEq, 30), style = line.style_dotted, width = 1)
+        if not na(t1)
+            b.lnT1 := line.new(bar_index, t1, bar_index + 1, t1, color = colTgt, width = 1)
+        if not na(t2)
+            b.lnT2 := line.new(bar_index, t2, bar_index + 1, t2, color = colTgt, width = 1)
+    txt = (dir == "bearish" ? "BEAR" : "BULL") + " EBP" +
+         "\nfail " + px(b.sweep) + " · EQ " + px(b.eq) +
+         "\nT1 " + (na(t1) ? "—" : px(t1)) + " · T2 " + (na(t2) ? "—" : px(t2))
+    label.new(bar_index, dir == "bearish" ? high : low, txt,
+         style = dir == "bearish" ? label.style_label_down : label.style_label_up,
+         color = color.new(c, 0), textcolor = color.white, size = size.small)
+    b
+
+// ─────────────────────────────────────────────────────────────
+// Per confirmed bar
+// ─────────────────────────────────────────────────────────────
+if barstate.isconfirmed
+    // 1) record swings that confirm on this bar
+    if isPivLow()
+        pivLoP.push(low[pivN])
+        pivLoB.push(bar_index - pivN)
+    if isPivHigh()
+        pivHiP.push(high[pivN])
+        pivHiB.push(bar_index - pivN)
+
+    // 2) progress the living bias with this bar
+    if not na(cur) and cur.state == "active" and bar_index > cur.startBar
+        bear = cur.isBear()
+        failed = bear ? high > cur.sweep : low < cur.sweep
+        if failed
+            cur.endBias("failed", "through " + px(cur.sweep))
+        else
+            hitPx = hitMode == "Close" ? close : (bear ? low : high)
+            if not cur.t1Hit and not na(cur.t1) and (bear ? hitPx <= cur.t1 : hitPx >= cur.t1)
+                cur.t1Hit := true
+                cur.t1Time := time
+                if not na(cur.lnT1)
+                    cur.lnT1.set_x2(bar_index)
+                    cur.lnT1.set_width(2)
+                label.new(bar_index, cur.t1, "T1 ✓", style = bear ? label.style_label_up : label.style_label_down, color = color.new(colTgt, 10), textcolor = color.black, size = size.small)
+            if not cur.t2Hit and not na(cur.t2) and (bear ? hitPx <= cur.t2 : hitPx >= cur.t2)
+                cur.t2Hit := true
+                cur.t2Time := time
+                if not na(cur.lnT2)
+                    cur.lnT2.set_x2(bar_index)
+                    cur.lnT2.set_width(2)
+                label.new(bar_index, cur.t2, "T2 ✓ complete", style = bear ? label.style_label_up : label.style_label_down, color = color.new(colTgt, 10), textcolor = color.black, size = size.small)
+            cont = bear ? close < cur.l : close > cur.h
+            if cont
+                cur.contCloses := cur.contCloses + 1
+                if showCont
+                    label.new(bar_index, bear ? high : low, bear ? "▼" : "▲", style = bear ? label.style_label_down : label.style_label_up, color = color.new(cur.col(), 60), textcolor = color.white, size = size.tiny)
+            reclaimed = bear ? close > cur.eq : close < cur.eq
+            if reclaimed
+                cur.endBias("reclaimed", "close through EQ " + px(cur.eq))
+            else
+                cur.extendLines()
+
+    // 3) is this bar itself an EBP?
+    ebp = classify(open, high, low, close, open[1], high[1], low[1], close[1])
+    if ebp != "neutral"
+        alive = not na(cur) and cur.state == "active"
+        if alive and cur.dir == ebp and sameDirMode == "Keep original"
+            label.new(bar_index, ebp == "bearish" ? high : low, "EBP+", style = ebp == "bearish" ? label.style_label_down : label.style_label_up, color = color.new(cur.col(), 50), textcolor = color.white, size = size.tiny)
+        else
+            if alive
+                cur.endBias("superseded", "")
+            cur := newBias(ebp)
+
+// ─────────────────────────────────────────────────────────────
+// Status table (includes a live preview of the forming bar)
+// ─────────────────────────────────────────────────────────────
+row(table t, int r, string k, string v, color bg) =>
+    t.cell(0, r, k, text_color = color.white, bgcolor = color.new(color.gray, 60), text_halign = text.align_left, text_size = size.small)
+    t.cell(1, r, v, text_color = color.white, bgcolor = bg, text_halign = text.align_left, text_size = size.small)
+
+if barstate.islast and showTable
+    var table t = table.new(position.top_right, 2, 9, border_width = 1)
+    if na(cur) or cur.state != "active"
+        row(t, 0, "Daily bias", "neutral" + (na(cur) ? "" : " (" + cur.state + " " + dstr(cur.endTime) + ")"), color.new(color.gray, 40))
+    else
+        bear = cur.isBear()
+        c = cur.col()
+        stg = cur.stage()
+        days = bar_index - cur.startBar
+        row(t, 0, "Daily bias", (bear ? "BEARISH" : "BULLISH") + " · " + stg, color.new(c, 20))
+        row(t, 1, "EBP", dstr(cur.startTime) + " · day " + str.tostring(days) + (cur.contCloses > 0 ? " · " + str.tostring(cur.contCloses) + " cont. close" + (cur.contCloses > 1 ? "s" : "") : ""), color.new(c, 70))
+        row(t, 2, "Fail (sweep)", px(cur.sweep) + "  " + (bear ? "+" : "−") + px(math.abs(cur.sweep - close)), color.new(c, 70))
+        row(t, 3, "EQ", px(cur.eq) + "  " + (bear ? "+" : "−") + px(math.abs(cur.eq - close)), color.new(c, 70))
+        t1s = na(cur.t1) ? "—" : cur.t1Hit ? px(cur.t1) + "  ✓ " + dstr(cur.t1Time) : px(cur.t1) + "  " + px(math.abs(close - cur.t1)) + " away"
+        t2s = na(cur.t2) ? "—" : cur.t2Hit ? px(cur.t2) + "  ✓ " + dstr(cur.t2Time) : px(cur.t2) + "  " + px(math.abs(close - cur.t2)) + " away"
+        row(t, 4, "T1", t1s, color.new(c, 70))
+        row(t, 5, "T2", t2s, color.new(c, 70))
+        grade = stg == "fresh" ? "QUALIFIED" : stg == "extended" ? "QUALIFIED · extended" : "QUALIFIED · complete"
+        row(t, 6, "Intraday " + (bear ? "shorts" : "longs"), grade, color.new(c, 40))
+        // live preview of the forming bar (not yet applied)
+        string pv = ""
+        if barstate.isrealtime and not barstate.isconfirmed
+            if bear ? high > cur.sweep : low < cur.sweep
+                pv := "⚠ traded through fail level"
+            else if bear ? close > cur.eq : close < cur.eq
+                pv := "⚠ closing above EQ → would reclaim"
+            else
+                hp = hitMode == "Close" ? close : (bear ? low : high)
+                if not cur.t2Hit and not na(cur.t2) and (bear ? hp <= cur.t2 : hp >= cur.t2)
+                    pv := "T2 reached"
+                else if not cur.t1Hit and not na(cur.t1) and (bear ? hp <= cur.t1 : hp >= cur.t1)
+                    pv := "T1 reached"
+                else if bear ? close < cur.l : close > cur.h
+                    pv := "continuation (closing beyond EBP " + (bear ? "low" : "high") + ")"
+                else
+                    pv := "holding"
+        row(t, 7, "Today so far", pv == "" ? "—" : pv, color.new(color.gray, 60))
