@@ -9,7 +9,8 @@ indicator("EBP Bias Lifecycle — prototype", "EBP Life", overlay = true, max_li
 //   ↩ reclaimed  a candle CLOSES back through the EBP's EQ (50% of its range)
 //   ⇄ superseded a new EBP replaces it (opposite direction always; same direction per input)
 // While it lives:
-//   T1 / T2      swing targets found to the LEFT of the EBP (1-bar pivots by default)
+//   T1 / T2      swing staircase to the LEFT of the EBP: T1 = first pivot below the EBP low (walking
+//                back in time), T2 = first pivot below T1 (1-bar pivots by default)
 //   stage        fresh → extended (T1 hit) → complete (T2 hit)   ← this is what grades intraday signals
 //   ▼ / ▲ cont.  a candle closing beyond the EBP's extreme (strength flag, not a bias change)
 // ─────────────────────────────────────────────────────────────
@@ -26,8 +27,6 @@ hitMode     = input.string("Touch (wick)", "Target counts as hit on", options = 
 grpT      = "Targets"
 pivN      = input.int(1, "Pivot strength (bars each side)", minval = 1, group = grpT, tooltip = "1 = three-candle pattern, middle candle is the extreme.")
 lookback  = input.int(250, "Look back this many bars for swings", minval = 20, group = grpT)
-mergePct  = input.float(0.25, "Merge swings within (% of price)", minval = 0, step = 0.05, group = grpT,
-     tooltip = "Pivots this close together are treated as one level (the furthest one). Stops T1 and T2 landing on near-identical lows.")
 
 grpD       = "Display"
 showLines  = input.bool(true, "Draw sweep / EQ / target lines", group = grpD)
@@ -79,45 +78,27 @@ isPivHigh() =>
         ok := ok and high[pivN] > high[pivN + i] and high[pivN] > high[pivN - i]
     ok
 
-// Nearest two swing levels beyond the EBP's extreme, scanning left of bar B, clustered.
-findTargets(string dir, float ref, float extreme, int B) =>
+// Targets = the swing staircase of the leg, read backwards in time from the EBP:
+//   walk left; T1 = first pivot beyond the EBP's extreme; keep walking; T2 = first pivot beyond T1.
+// (Not "nearest in price" — an old level that price has since traded through is not a target.)
+findTargets(string dir, float extreme, int B) =>
     bear = dir == "bearish"
     src  = bear ? pivLoP : pivHiP
     srcB = bear ? pivLoB : pivHiB
-    cands = array.new<float>()
+    float t1 = na
+    float t2 = na
     if src.size() > 0
         for i = src.size() - 1 to 0
             b = srcB.get(i)
-            if B - b > lookback
+            if B - b > lookback or not na(t2)
                 break
             if b < B
                 p = src.get(i)
-                if bear ? p < extreme : p > extreme
-                    cands.push(p)
-    if bear
-        cands.sort(order.descending)
-    else
-        cands.sort(order.ascending)
-    float t1 = na
-    float t2 = na
-    float cur = na
-    tol = ref * mergePct / 100
-    for p in cands
-        if na(cur)
-            cur := p
-        else if math.abs(p - cur) <= tol
-            cur := bear ? math.min(cur, p) : math.max(cur, p)
-        else
-            if na(t1)
-                t1 := cur
-            else if na(t2)
-                t2 := cur
-            cur := p
-    if not na(cur)
-        if na(t1)
-            t1 := cur
-        else if na(t2)
-            t2 := cur
+                if na(t1)
+                    if bear ? p < extreme : p > extreme
+                        t1 := p
+                else if bear ? p < t1 : p > t1
+                    t2 := p
     [t1, t2]
 
 // ─────────────────────────────────────────────────────────────
@@ -180,7 +161,7 @@ newBias(string dir) =>
     b = Bias.new(dir, bar_index, time, open, high, low, close)
     b.sweep := dir == "bearish" ? high : low
     b.eq := (high + low) / 2
-    [t1, t2] = findTargets(dir, close, dir == "bearish" ? low : high, bar_index)
+    [t1, t2] = findTargets(dir, dir == "bearish" ? low : high, bar_index)
     b.t1 := t1
     b.t2 := t2
     c = b.col()
