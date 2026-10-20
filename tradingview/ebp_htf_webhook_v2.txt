@@ -1,0 +1,435 @@
+//@version=6
+indicator("EBP HTF Webhook v2 (D/3D/W/M lifecycle)", "EBP HTF v2", overlay = true, max_labels_count = 50)
+
+// ─────────────────────────────────────────────────────────────
+// One instance per asset, on the DAILY chart. Create ONE alert:
+//   Condition: EBP HTF v2 → "Any alert() function call"
+//   Webhook URL: your relay URL · Notifications: Webhook only
+//
+// v2: each higher timeframe carries a BIAS WITH A LIFECYCLE instead of a one-candle snapshot.
+//   An EBP opens a bias (fixed sweep/fail level, EQ, reference candle = the EBP, swing targets T1/T2).
+//   Continuation: a close beyond the reference's extreme → that candle becomes the reference.
+//   Ends by: failed (wick through sweep, live) · broken (close beyond the reference's range, once
+//   there has been a continuation) · reclaimed (close back through EQ) · superseded (a new EBP).
+//   Stage: fresh → extended (T1 touched) → complete (T2 touched). Stage annotates, never changes, the bias.
+//
+// JSON per timeframe (sent at every daily close / session open, and live on fail or target hit):
+//   ebp          EBP classification of the LAST CLOSED candle (what v1 called "bias")
+//   bias         direction of the LIVING bias, or "neutral"
+//   state        "active" | "none"       stage  "fresh" | "extended" | "complete" | ""
+//   sweep        fail level (wick)       eq     EBP midpoint
+//   break_level  close level that ends it (reference extreme; EQ before any continuation)
+//   ref_end      date of the reference candle   ebp_end  date of the EBP candle   days  closed candles since
+//   t1, t2, t1_hit, t2_hit, cont_closes, ended_how, ended_on
+//   plus the v1 fields: open/high/low/close/prior_*/intact/candle_start/candle_end/forming_bias/forming_start
+// ─────────────────────────────────────────────────────────────
+
+grpS          = "EBP rules"
+reqOpp        = input.bool(false, "Require opposite-colour prior candle", group = grpS)
+minSweepTicks = input.int(1, "Minimum sweep (ticks)", minval = 1, group = grpS)
+
+grpL        = "Lifecycle"
+sameDirMode = input.string("Restart", "Same-direction EBP while active", options = ["Restart", "Keep original"], group = grpL)
+breakLevel  = input.string("High / low", "Continuation broken by a close beyond the reference candle's", options = ["High / low", "Open (body)", "Off"], group = grpL)
+lookback    = input.int(250, "Look back this many candles for swing targets", minval = 20, group = grpL)
+
+grpW     = "Webhook"
+assetKey = input.string("", "Asset key (NQ, ES, YM, RTY, GC, CL)", group = grpW, tooltip = "Blank = from the chart symbol.")
+secret   = input.string("", "Shared secret", group = grpW)
+
+grpD     = "Display"
+showTbl  = input.bool(true, "Show bias table", group = grpD)
+
+// ─────────────────────────────────────────────────────────────
+// Period bookkeeping (unchanged from v1)
+// ─────────────────────────────────────────────────────────────
+chartOk = timeframe.isdaily and timeframe.multiplier == 1
+td = time_close
+tz  = syminfo.timezone
+key = assetKey != "" ? assetKey : str.replace_all(str.replace_all(syminfo.ticker, "1!", ""), "!", "")
+
+jsonEsc(string s) => str.replace_all(str.replace_all(s, "\\", "\\\\"), "\"", "\\\"")
+dstr(int t) => na(t) ? "" : str.format_time(t, "yyyy-MM-dd", tz)
+jnum(float v) => na(v) ? "null" : str.tostring(v, format.mintick)
+jdate(int t) => na(t) ? "null" : '"' + dstr(t) + '"'
+
+var int dayCount = 0
+var int lastYear = na
+yearNow = year(td, tz)
+
+weekKey(int t) =>
+    dow = dayofweek(t, tz)
+    off = (dow - dayofweek.monday + 7) % 7
+    mon = t - off * 86400000
+    year(mon, tz) * 10000 + month(mon, tz) * 100 + dayofmonth(mon, tz)
+
+monthKey(int t) => year(t, tz) * 100 + month(t, tz)
+threeDayKey(int t, int count) => year(t, tz) * 1000 + math.floor((count - 1) / 3)
+
+monthClosesToday(int t) =>
+    dow = dayofweek(t, tz)
+    nextWeekday = t + (dow == dayofweek.friday ? 3 : dow == dayofweek.saturday ? 2 : 1) * 86400000
+    month(nextWeekday, tz) != month(t, tz)
+
+classify(float cO, float cH, float cL, float cC, float pO, float pH, float pL, float pC) =>
+    if na(pO)
+        "neutral"
+    else
+        bullSweep = math.round((pL - cL) / syminfo.mintick) >= minSweepTicks
+        bearSweep = math.round((cH - pH) / syminfo.mintick) >= minSweepTicks
+        if bullSweep and cC > pO and (not reqOpp or pC < pO)
+            "bullish"
+        else if bearSweep and cC < pO and (not reqOpp or pC > pO)
+            "bearish"
+        else
+            "neutral"
+
+// ─────────────────────────────────────────────────────────────
+// Timeframe object: synthetic candle + closed-candle history + living bias
+// ─────────────────────────────────────────────────────────────
+type Tf
+    string name
+    // in-progress period
+    int   curKey = na
+    float curO = na
+    float curH = na
+    float curL = na
+    float curC = na
+    int   curStart = na
+    int   curEnd = na
+    int   curBars = 0
+    bool  finalized = false
+    // last closed candle and the one before it
+    float lastO = na
+    float lastH = na
+    float lastL = na
+    float lastC = na
+    int   lastStart = na
+    int   lastEnd = na
+    float prevO = na
+    float prevH = na
+    float prevL = na
+    float prevC = na
+    string ebp = "neutral"          // EBP classification of the last closed candle
+    // closed-candle history (newest last) and confirmed 1-bar pivots, indexed by closed-candle number
+    int   nClosed = 0
+    array<float> hH
+    array<float> hL
+    array<float> pivLoP
+    array<int>   pivLoI
+    array<float> pivHiP
+    array<int>   pivHiI
+    // living bias
+    bool   active = false
+    string bias = "neutral"
+    int    bIdx = na
+    int    bEnd = na                // end time of the EBP candle
+    float  bH = na
+    float  bL = na
+    float  sweep = na
+    float  eq = na
+    float  refH = na
+    float  refL = na
+    float  refO = na
+    int    refEnd = na
+    float  t1 = na
+    float  t2 = na
+    int    t1Hit = na
+    int    t2Hit = na
+    int    cont = 0
+    string endedHow = ""
+    int    endedOn = na
+
+mk(string n) => Tf.new(name = n, hH = array.new<float>(), hL = array.new<float>(), pivLoP = array.new<float>(), pivLoI = array.new<int>(), pivHiP = array.new<float>(), pivHiI = array.new<int>())
+var tfD = mk("D")
+var tf3 = mk("3D")
+var tfW = mk("W")
+var tfM = mk("M")
+
+method isBear(Tf s) => s.bias == "bearish"
+method breakPx(Tf s) =>
+    s.cont == 0 ? s.eq : breakLevel == "Open (body)" ? s.refO : (s.isBear() ? s.refH : s.refL)
+method stage(Tf s) =>
+    not s.active ? "" : not na(s.t2Hit) ? "complete" : not na(s.t1Hit) ? (na(s.t2) ? "complete" : "extended") : "fresh"
+
+method endBias(Tf s, string how, int t) =>
+    s.active := false
+    s.bias := "neutral"
+    s.endedHow := how
+    s.endedOn := t
+
+// Swing staircase, walking back in time from closed-candle index B: T1 = first pivot beyond the
+// EBP's extreme, T2 = first pivot beyond T1.
+findTargets(Tf s, string dir, float extreme, int B) =>
+    bear = dir == "bearish"
+    src  = bear ? s.pivLoP : s.pivHiP
+    srcI = bear ? s.pivLoI : s.pivHiI
+    float t1 = na
+    float t2 = na
+    if src.size() > 0
+        for i = src.size() - 1 to 0
+            idx = srcI.get(i)
+            if B - idx > lookback or not na(t2)
+                break
+            if idx < B
+                p = src.get(i)
+                if na(t1)
+                    if bear ? p < extreme : p > extreme
+                        t1 := p
+                else if bear ? p < t1 : p > t1
+                    t2 := p
+    [t1, t2]
+
+method startBias(Tf s, string dir, int idx) =>
+    s.active := true
+    s.bias := dir
+    s.bIdx := idx
+    s.bEnd := s.lastEnd
+    s.bH := s.lastH
+    s.bL := s.lastL
+    s.sweep := dir == "bearish" ? s.lastH : s.lastL
+    s.eq := (s.lastH + s.lastL) / 2
+    s.refH := s.lastH
+    s.refL := s.lastL
+    s.refO := s.lastO
+    s.refEnd := s.lastEnd
+    [t1, t2] = findTargets(s, dir, dir == "bearish" ? s.lastL : s.lastH, idx)
+    s.t1 := t1
+    s.t2 := t2
+    s.t1Hit := na
+    s.t2Hit := na
+    s.cont := 0
+    s.endedHow := ""
+    s.endedOn := na
+
+// Called once per closed candle on this timeframe, after last* has been set.
+method onClose(Tf s) =>
+    idx = s.nClosed
+    s.nClosed += 1
+    s.hH.push(s.lastH)
+    s.hL.push(s.lastL)
+    if s.hH.size() > lookback + 5
+        s.hH.shift()
+        s.hL.shift()
+    // 1) the candle before this one is now confirmed as a pivot or not (1 bar each side)
+    n = s.hL.size()
+    if n >= 3
+        l0 = s.hL.get(n - 3)
+        l1 = s.hL.get(n - 2)
+        l2 = s.hL.get(n - 1)
+        if l1 < l0 and l1 < l2
+            s.pivLoP.push(l1)
+            s.pivLoI.push(idx - 1)
+        h0 = s.hH.get(n - 3)
+        h1 = s.hH.get(n - 2)
+        h2 = s.hH.get(n - 1)
+        if h1 > h0 and h1 > h2
+            s.pivHiP.push(h1)
+            s.pivHiI.push(idx - 1)
+    // 2) progress the living bias with this closed candle (close-based rules; fail + targets are live)
+    if s.active and idx > s.bIdx
+        bear = s.isBear()
+        c = s.lastC
+        reclaimed = bear ? c > s.eq : c < s.eq
+        broken = breakLevel != "Off" and s.cont > 0 and (bear ? c > s.breakPx() : c < s.breakPx())
+        if reclaimed
+            s.endBias("reclaimed", s.lastEnd)
+        else if broken
+            s.endBias("broken", s.lastEnd)
+        else if bear ? c < s.refL : c > s.refH
+            s.cont += 1
+            s.refH := s.lastH
+            s.refL := s.lastL
+            s.refO := s.lastO
+            s.refEnd := s.lastEnd
+    // 3) is this candle itself an EBP?
+    s.ebp := classify(s.lastO, s.lastH, s.lastL, s.lastC, s.prevO, s.prevH, s.prevL, s.prevC)
+    if s.ebp != "neutral" and not (s.active and s.bias == s.ebp and sameDirMode == "Keep original")
+        if s.active
+            s.endBias("superseded", s.lastEnd)
+        s.startBias(s.ebp, idx)
+
+method finalize(Tf s) =>
+    if not s.finalized and s.curBars > 0
+        s.prevO := s.lastO
+        s.prevH := s.lastH
+        s.prevL := s.lastL
+        s.prevC := s.lastC
+        s.lastO := s.curO
+        s.lastH := s.curH
+        s.lastL := s.curL
+        s.lastC := s.curC
+        s.lastStart := s.curStart
+        s.lastEnd := s.curEnd
+        s.finalized := true
+        s.onClose()
+
+method startPeriod(Tf s, int k, int t) =>
+    s.curKey := k
+    s.curO := na
+    s.curH := na
+    s.curL := na
+    s.curC := na
+    s.curStart := t
+    s.curBars := 0
+    s.finalized := false
+
+method absorb(Tf s, float o, float h, float l, float c, int t) =>
+    if s.curBars == 0
+        s.curO := o
+        s.curH := h
+        s.curL := l
+    else
+        s.curH := math.max(s.curH, h)
+        s.curL := math.min(s.curL, l)
+    s.curC := c
+    s.curEnd := t
+    s.curBars += 1
+
+method formingBias(Tf s) =>
+    s.finalized or s.curBars == 0 ? "neutral" : classify(s.curO, s.curH, s.curL, s.curC, s.lastO, s.lastH, s.lastL, s.lastC)
+
+method rollIfNew(Tf s, int k, int t) =>
+    bool corrected = false
+    if na(s.curKey) or k != s.curKey
+        if not na(s.curKey) and not s.finalized
+            s.finalize()
+            corrected := true
+        s.startPeriod(k, t)
+    corrected
+
+// ─────────────────────────────────────────────────────────────
+// Per-bar logic
+// ─────────────────────────────────────────────────────────────
+countThisBar = (na(lastYear) or yearNow != lastYear) ? 1 : dayCount + 1
+kD = int(td / 86400000)
+k3 = threeDayKey(td, countThisBar)
+kW = weekKey(td)
+kM = monthKey(td)
+
+// 1) New bar opened: roll periods; if any HTF closed un-declared, send a correction
+bool corrected = false
+if chartOk and barstate.isnew
+    corrected := tfD.rollIfNew(kD, td) or corrected
+    corrected := tf3.rollIfNew(k3, td) or corrected
+    corrected := tfW.rollIfNew(kW, td) or corrected
+    corrected := tfM.rollIfNew(kM, td) or corrected
+
+// 2) Live checks on every update (incl. the forming bar), once the EBP candle has closed:
+//    fail (wick through sweep) and target touches
+method checkLive(Tf s) =>
+    string ev = ""
+    if s.active and not na(s.sweep) and s.bEnd < td
+        bear = s.isBear()
+        if bear ? high > s.sweep : low < s.sweep
+            s.endBias("failed", td)
+            ev := "fail"
+        else
+            if na(s.t1Hit) and not na(s.t1) and (bear ? low <= s.t1 : high >= s.t1)
+                s.t1Hit := td
+                ev := "target"
+            if na(s.t2Hit) and not na(s.t2) and (bear ? low <= s.t2 : high >= s.t2)
+                s.t2Hit := td
+                ev := "target"
+    ev
+
+tfJson(Tf s) =>
+    bear = s.isBear()
+    '"' + s.name + '":{' +
+     '"ebp":"' + s.ebp + '","bias":"' + s.bias + '","state":"' + (s.active ? "active" : "none") + '","stage":"' + s.stage() + '"' +
+     ',"open":' + jnum(s.lastO) + ',"high":' + jnum(s.lastH) + ',"low":' + jnum(s.lastL) + ',"close":' + jnum(s.lastC) +
+     ',"prior_open":' + jnum(s.prevO) + ',"prior_high":' + jnum(s.prevH) + ',"prior_low":' + jnum(s.prevL) +
+     ',"candle_start":"' + dstr(s.lastStart) + '","candle_end":"' + dstr(s.lastEnd) + '"' +
+     ',"forming_bias":"' + s.formingBias() + '","forming_start":"' + (s.finalized or s.curBars == 0 ? "" : dstr(s.curStart)) + '"' +
+     ',"sweep":' + (s.active ? jnum(s.sweep) : "null") + ',"intact":' + (s.active ? "true" : "false") +
+     ',"eq":' + (s.active ? jnum(s.eq) : "null") +
+     ',"break_level":' + (s.active ? jnum(s.breakPx()) : "null") + ',"break_kind":"' + (s.active ? (bear ? "close_above" : "close_below") : "") + '"' +
+     ',"ebp_end":' + (s.active ? jdate(s.bEnd) : "null") + ',"ebp_high":' + (s.active ? jnum(s.bH) : "null") + ',"ebp_low":' + (s.active ? jnum(s.bL) : "null") +
+     ',"ref_end":' + (s.active ? jdate(s.refEnd) : "null") + ',"days":' + (s.active ? str.tostring(s.nClosed - 1 - s.bIdx) : "0") +
+     ',"t1":' + (s.active ? jnum(s.t1) : "null") + ',"t2":' + (s.active ? jnum(s.t2) : "null") +
+     ',"t1_hit":' + (s.active ? jdate(s.t1Hit) : "null") + ',"t2_hit":' + (s.active ? jdate(s.t2Hit) : "null") +
+     ',"cont_closes":' + str.tostring(s.active ? s.cont : 0) +
+     ',"ended_how":"' + s.endedHow + '","ended_on":' + jdate(s.endedOn) + '}'
+
+msgHtf(string reason) =>
+    '{"event":"htf","v":2,"reason":"' + reason + '","secret":"' + jsonEsc(secret) + '","asset":"' + jsonEsc(key) + '","ticker":"' + jsonEsc(syminfo.ticker) +
+     '","trade_date":"' + dstr(td) + '","as_of":' + str.tostring(time_close) + ',"bar_time":' + str.tostring(time) + ',"price":' + str.tostring(close, format.mintick) + ',' +
+     tfJson(tfD) + ',' + tfJson(tf3) + ',' + tfJson(tfW) + ',' + tfJson(tfM) + '}'
+
+if chartOk
+    string live = ""
+    for s in array.from(tfD, tf3, tfW, tfM)
+        ev = s.checkLive()
+        if ev == "fail"
+            live := "fail"
+        else if ev == "target" and live == ""
+            live := "target"
+    if live != ""
+        alert(msgHtf(live), alert.freq_all)   // only called on the tick where a fail / target hit happens
+
+// 3) Bar closed: absorb it, declare closes by calendar rule, send the HTF update
+if chartOk and barstate.isconfirmed
+    tfD.rollIfNew(kD, td)
+    tf3.rollIfNew(k3, td)
+    tfW.rollIfNew(kW, td)
+    tfM.rollIfNew(kM, td)
+    for s in array.from(tfD, tf3, tfW, tfM)
+        s.absorb(open, high, low, close, td)
+    dayCount := countThisBar
+    lastYear := yearNow
+    tfD.finalize()
+    if countThisBar % 3 == 0
+        tf3.finalize()
+    if dayofweek(td, tz) == dayofweek.friday
+        tfW.finalize()
+    if monthClosesToday(td)
+        tfM.finalize()
+    alert(msgHtf("close"), alert.freq_once_per_bar_close)
+
+// Session open: send the current state too
+if chartOk and barstate.isnew
+    alert(msgHtf(corrected ? "correction" : "open"), alert.freq_once_per_bar)
+
+// First real-time tick after the alert is created: send the current state so the board fills in at once
+var bool booted = false
+if chartOk and barstate.isrealtime and not booted
+    booted := true
+    alert(msgHtf("startup"), alert.freq_once_per_bar)
+
+// ─────────────────────────────────────────────────────────────
+// Visuals
+// ─────────────────────────────────────────────────────────────
+colFor(string b) => b == "bullish" ? color.teal : b == "bearish" ? color.red : color.gray
+px(float v) => na(v) ? "—" : str.tostring(v, format.mintick)
+shortDate(int t) => na(t) ? "" : str.format_time(t, "d MMM", tz)
+
+if barstate.islast
+    var table t = table.new(position.top_right, 5, 5, border_width = 1)
+    if not chartOk
+        t.cell(0, 0, "EBP HTF v2: use a DAILY chart", bgcolor = color.new(color.red, 20), text_color = color.white)
+    else if secret == ""
+        t.cell(0, 0, "EBP HTF v2: shared secret is empty", bgcolor = color.new(color.red, 20), text_color = color.white)
+    else if showTbl
+        hdrBg = color.new(color.gray, 60)
+        t.cell(0, 0, key, text_color = color.white, bgcolor = hdrBg)
+        t.cell(0, 1, "bias", text_color = color.white, bgcolor = hdrBg, text_size = size.small)
+        t.cell(0, 2, "ends", text_color = color.white, bgcolor = hdrBg, text_size = size.small)
+        t.cell(0, 3, "T1", text_color = color.white, bgcolor = hdrBg, text_size = size.small)
+        t.cell(0, 4, "T2", text_color = color.white, bgcolor = hdrBg, text_size = size.small)
+        i = 1
+        for s in array.from(tfM, tfW, tf3, tfD)
+            t.cell(i, 0, s.name, text_color = color.white, bgcolor = hdrBg)
+            bg = color.new(colFor(s.bias), 30)
+            fb = s.formingBias()
+            if s.active
+                bear = s.isBear()
+                t.cell(i, 1, (bear ? "BEAR" : "BULL") + " · " + s.stage() + "\nday " + str.tostring(s.nClosed - 1 - s.bIdx) + (fb != "neutral" ? " · " + fb + " forming" : ""), text_color = color.white, bgcolor = bg, text_size = size.small)
+                t.cell(i, 2, "close " + (bear ? ">" : "<") + " " + px(s.breakPx()) + "\nwick " + (bear ? ">" : "<") + " " + px(s.sweep), text_color = color.white, bgcolor = bg, text_size = size.small)
+                t.cell(i, 3, na(s.t1) ? "—" : px(s.t1) + (na(s.t1Hit) ? "" : "\n✓ " + shortDate(s.t1Hit)), text_color = color.white, bgcolor = bg, text_size = size.small)
+                t.cell(i, 4, na(s.t2) ? "—" : px(s.t2) + (na(s.t2Hit) ? "" : "\n✓ " + shortDate(s.t2Hit)), text_color = color.white, bgcolor = bg, text_size = size.small)
+            else
+                t.cell(i, 1, "—" + (s.endedHow != "" ? "\n" + s.endedHow + " " + shortDate(s.endedOn) : "") + (fb != "neutral" ? "\n" + fb + " forming" : ""), text_color = color.white, bgcolor = bg, text_size = size.small)
+                t.cell(i, 2, "", bgcolor = bg)
+                t.cell(i, 3, "", bgcolor = bg)
+                t.cell(i, 4, "", bgcolor = bg)
+            i += 1
