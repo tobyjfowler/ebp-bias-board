@@ -2,125 +2,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<style>
-  /* Layout: one card per asset (2×2 timeframe grid + intraday strip) at every width. Dark-first, like a chart. */
-  :root {
-    --bg: #0f1216;
-    --panel: #161a20;
-    --line: #262c35;
-    --fg: #e6e9ee;
-    --muted: #8a93a1;
-    --bull: #2fbf8f;
-    --bear: #e4574f;
-    --bull-ink: #0b2a1f;
-    --bear-ink: #2f0d0b;
-    --neutral: #3a414c;
-    --warn: #e0a640;
-    --display: "Barlow", "Helvetica Neue", Arial, sans-serif;
-    --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-    color-scheme: dark;
-  }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) {
-      --bg: #f3f4f6; --panel: #ffffff; --line: #d9dde3; --fg: #171b21; --muted: #5d6673;
-      --bull: #178f68; --bear: #c73f38; --bull-ink: #ffffff; --bear-ink: #ffffff; --neutral: #c9ced6; --warn: #b07a14;
-      color-scheme: light;
-    }
-  }
-  :root[data-theme="light"] {
-    --bg: #f3f4f6; --panel: #ffffff; --line: #d9dde3; --fg: #171b21; --muted: #5d6673;
-    --bull: #178f68; --bear: #c73f38; --bull-ink: #ffffff; --bear-ink: #ffffff; --neutral: #c9ced6; --warn: #b07a14;
-    color-scheme: light;
-  }
-
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--display); font-size: 15px; line-height: 1.4; }
-  .wrap { max-width: 1100px; margin: 0 auto; padding-block: 20px 40px; padding-inline: 16px; }
-
-  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; margin-bottom: 14px; }
-  h1 { font-size: 22px; font-weight: 700; letter-spacing: 0.01em; margin: 0; text-wrap: balance; }
-  h1 small { font-weight: 500; color: var(--muted); font-size: 14px; margin-left: 8px; }
-  .meta { font-family: var(--mono); font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px; }
-
-  .banner { background: var(--warn); color: #1a1200; padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 13px; margin-bottom: 14px; }
-  .banner[hidden] { display: none; }
-
-  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-bottom: 16px; align-items: center; }
-  .legend .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
-
-  /* Cards at every width: one column when narrow, two side by side when there is room */
-  .board { display: grid; grid-template-columns: 1fr; gap: 12px; }
-  @media (min-width: 1000px) { .board { grid-template-columns: 1fr 1fr; align-items: start; } }
-  .board > .head { display: none; }
-  .head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
-  .asset { display: flex; flex-direction: column; gap: 2px; justify-content: center; }
-  .asset .sym { font-size: 18px; font-weight: 700; }
-  .asset .name { font-size: 12px; color: var(--muted); }
-  .asset .px { font-family: var(--mono); font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
-  .asset .asof { font-size: 11px; color: var(--muted); }
-  .asset .asof.stale { color: var(--warn); }
-  .align { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
-  .align .dots { display: inline-flex; gap: 2px; }
-  .align .dots i { width: 7px; height: 7px; border-radius: 2px; background: var(--neutral); display: inline-block; }
-  .align .dots i.bullish { background: var(--bull); }
-  .align .dots i.bearish { background: var(--bear); }
-  .align.bullish { color: var(--bull); } .align.bearish { color: var(--bear); } .align.mixed { color: var(--muted); }
-
-  .cell { display: flex; flex-direction: column; gap: 6px; }
-  .pill { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 4px 9px; border-radius: 4px; font-weight: 700; font-size: 13px; letter-spacing: 0.04em; background: var(--neutral); color: var(--fg); }
-  .pill.bullish { background: var(--bull); color: var(--bull-ink); }
-  .pill.bearish { background: var(--bear); color: var(--bear-ink); }
-  .pill.failed { background: transparent; border: 1.5px dashed currentColor; }
-  .pill.failed.bullish { color: var(--bull); } .pill.failed.bearish { color: var(--bear); }
-  .pill.failed .lbl { text-decoration: line-through; text-decoration-thickness: 2px; }
-  .pill .eqtag { font-size: 9px; letter-spacing: 0.08em; padding: 1px 4px; border-radius: 3px; background: rgba(0,0,0,0.25); }
-  .pill.eqflip { outline: 2px dashed currentColor; outline-offset: -2px; }
-  .sub.eqnote { color: var(--warn); }
-  .sub.eqwarn { color: var(--warn); font-weight: 600; }
-  .isig .q.flip { background: var(--warn); color: #1a1200; border: 0; }
-  .lvl { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .lvl b { color: var(--fg); font-weight: 500; }
-  .sub { font-size: 11px; color: var(--muted); }
-  .sub .forming { font-weight: 600; }
-  .sub .forming.bullish { color: var(--bull); } .sub .forming.bearish { color: var(--bear); }
-
-  /* Intraday strip (6H / 4H / 1H) under each asset */
-  .intraday { display: grid; align-items: start; border-top: 1px dashed var(--line); }
-  .intraday .ilabel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; white-space: nowrap; }
-  .isig { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 12px; }
-  .isig .itf { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 2.2em; flex: none; }
-  .isig .pill { font-size: 11px; padding: 3px 7px; }
-  .isig .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .isig .meta b { color: var(--fg); font-weight: 500; }
-  .isig .q { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 5px; border-radius: 3px; flex: none; }
-  .isig .q.yes { background: var(--fg); color: var(--bg); }
-  .isig .q.no { border: 1px solid var(--line); color: var(--muted); }
-  .isig.unq { opacity: 0.42; }
-  .isig.unq .pill { background: var(--neutral); color: var(--fg); }
-  .isig.unq .pill.failed { background: transparent; color: var(--muted); }
-  .isig.none { color: var(--muted); }
-  body.hide-unq .isig.unq { visibility: hidden; }
-  .toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
-  .toggle input { accent-color: var(--fg); }
-  .relay-note { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
-  .isig .q .qmark { display: none; }
-  .intraday { grid-template-columns: 1fr; gap: 6px; padding: 10px 14px; }
-  .intraday .ilabel { margin-bottom: 2px; }
-
-  footer { margin-top: 18px; font-size: 12px; color: var(--muted); max-width: 65ch; }
-  footer p { margin: 6px 0; }
-
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .card .asset { padding: 12px 14px 8px; border-bottom: 1px solid var(--line); flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-  .card .asset .px { margin: 0 0 0 auto; }
-  .card .asset .align { width: 100%; margin-top: 2px; }
-  .cells { display: grid; grid-template-columns: 1fr 1fr; }
-  .cells .cell { padding: 10px 14px; border-bottom: 1px solid var(--line); }
-  .cells .cell:nth-child(odd) { border-right: 1px solid var(--line); }
-  .cells .cell:nth-last-child(-n+2) { border-bottom: 0; }
-  .cell .tf { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
-  @media (prefers-reduced-motion: no-preference) { .pill { transition: background 0.2s; } }
-</style>
+<link rel="stylesheet" href="board.css">
 
 <div class="wrap">
   <header>
@@ -128,6 +10,7 @@
     <div class="meta">
       <span id="gen">Loading…</span>
       <span id="asof"></span>
+      <a href="journal.html" class="navlink">Journal →</a>
     </div>
   </header>
 

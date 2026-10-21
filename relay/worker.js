@@ -11,6 +11,9 @@
  * POST /telegram    Telegram bot webhook: /bias, /signals, /nq … /cl, /help. Register once by opening
  *                     https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<worker>/telegram&secret_token=<SIGNAL_SECRET>
  * GET  /signals     Everything the board needs: htf (per asset), latest intraday, recent events.
+ * GET  /journal     ?asset=NQ[&limit=40][&before=YYYY-MM-DD]  Per-day history for the journal page:
+ *                     the HTF cells as they stood at that day's close plus the day's intraday events.
+ *                     Written once per asset per trade date when its daily-close update arrives.
  * GET  /health      Plain OK.
  *
  * Bindings (Worker → Settings):
@@ -68,6 +71,8 @@ export default {
       ]);
       return json({ htf, latest, recent, meta, served_at: new Date().toISOString() });
     }
+
+    if (request.method === "GET" && url.pathname === "/journal") return handleJournalGet(env, url);
 
     if (request.method === "POST" && url.pathname === "/telegram") return handleTelegramUpdate(request, env);
 
@@ -211,6 +216,7 @@ async function handleHtf(env, body, asset) {
     }
   }
   await kvPut(env, "htf", htf);
+  if (body.reason === "close" && htf[asset].trade_date) await writeJournalDay(env, htf[asset]);
 
   let telegram = "none";
   if (changes.length) {
@@ -352,6 +358,79 @@ function biasChanges(prevHtf, curHtf) {
   return out;
 }
 
+// ── Journal (per-asset, per-trade-date history) ────────────────────────────
+const JOURNAL_INDEX_MAX = 800; // trade dates kept per asset (≈3 years)
+
+// Trade date (18:00–17:00 New York session) of an ISO timestamp
+function tradeDateOf(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hour12: false }).formatToParts(d);
+  const get = t => parts.find(p => p.type === t).value;
+  let y = Number(get("year")), m = Number(get("month")), day = Number(get("day"));
+  const h = Number(get("hour")) % 24;
+  if (h >= 18) { const n = new Date(Date.UTC(y, m - 1, day + 1)); y = n.getUTCFullYear(); m = n.getUTCMonth() + 1; day = n.getUTCDate(); }
+  return `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+// Intraday events of one asset on one trade date, from the relay's event log (fails folded into their signal)
+function dayEvents(recent, asset, date) {
+  const events = recent
+    .filter(e => e.asset === asset && tradeDateOf(e.candle_close) === date)
+    .map(e => e.event === "signal"
+      ? { event: "signal", tf: e.tf, dir: e.dir, close: e.close, sweep: e.sweep, candle_close: e.candle_close, qualified_by: e.qualified_by || [], notified: !!e.notified, flips: e.flips || [], reclaims: e.reclaims || [], failed: !!e.failed, failed_at: e.failed_at || null }
+      : { event: "fail", tf: e.tf, dir: e.dir, sweep: e.sweep, candle_close: e.candle_close, at: e.failed_at || e.received_at })
+    .sort((x, y) => (x.candle_close || "").localeCompare(y.candle_close || ""));
+  // a signal's later failure lives on the signal in "latest", not in the recent copy → fold fails into their signal
+  for (const f of events.filter(e => e.event === "fail")) {
+    const sig = events.find(e => e.event === "signal" && e.tf === f.tf && e.candle_close === f.candle_close);
+    if (sig) { sig.failed = true; sig.failed_at = sig.failed_at || f.at; }
+  }
+  return events.filter(e => e.event === "signal");
+}
+
+// Snapshot the asset's HTF cells at its daily close, plus the day's intraday signals. Also refreshes the
+// previous day's signals so a failure that happened after that day's close is recorded.
+async function writeJournalDay(env, a) {
+  const date = a.trade_date, asset = a.asset;
+  const recent = await kvGet(env, "recent", []);
+  const timeframes = {};
+  for (const tf of HTFS) {
+    const t = derive({ ...a.timeframes[tf] });
+    timeframes[tf] = {
+      bias: t.bias, eff_bias: t.eff_bias, state: t.state, open: t.open, high: t.high, low: t.low, close: t.close, sweep: t.sweep, eq: t.eq,
+      candle_start: t.candle_start, candle_end: t.candle_end, forming_bias: t.forming_bias, forming_start: t.forming_start,
+      violation: t.violation ? { by_tf: t.violation.by_tf, by_dir: t.violation.by_dir, close: t.violation.close, sweep: t.violation.sweep, at: t.violation.at } : null,
+      eq_tested: t.eq_tested ? { by_tf: t.eq_tested.by_tf, at: t.eq_tested.at } : null,
+      failed_at: t.failed_at || null,
+    };
+  }
+  const day = { asset, date, price: a.price, written_at: new Date().toISOString(), timeframes, signals: dayEvents(recent, asset, date) };
+  const idxKey = `jdays:${asset}`;
+  const idx = await kvGet(env, idxKey, []);
+  if (!idx.includes(date)) { idx.push(date); idx.sort(); while (idx.length > JOURNAL_INDEX_MAX) idx.shift(); }
+  const writes = [kvPut(env, `journal:${asset}:${date}`, day), kvPut(env, idxKey, idx)];
+  const prevDate = idx.filter(d => d < date).pop();
+  if (prevDate) {
+    const prev = await kvGet(env, `journal:${asset}:${prevDate}`, null);
+    if (prev) { prev.signals = dayEvents(recent, asset, prevDate); prev.refreshed_at = day.written_at; writes.push(kvPut(env, `journal:${asset}:${prevDate}`, prev)); }
+  }
+  await Promise.all(writes);
+  return day;
+}
+
+async function handleJournalGet(env, url) {
+  const asset = String(url.searchParams.get("asset") || "").toUpperCase();
+  if (!ASSETS.includes(asset)) return json({ error: "asset must be one of " + ASSETS.join(", ") }, 400);
+  const limit = Math.min(120, Math.max(1, Number(url.searchParams.get("limit")) || 40));
+  const before = url.searchParams.get("before") || "";
+  const idx = await kvGet(env, `jdays:${asset}`, []);
+  const dates = idx.filter(d => !before || d < before).slice(-limit).reverse();
+  const days = (await Promise.all(dates.map(d => kvGet(env, `journal:${asset}:${d}`, null)))).filter(Boolean);
+  const oldest = idx.length && dates.length ? dates[dates.length - 1] : null;
+  return json({ asset, days, more: oldest ? idx.some(d => d < oldest) : false, total: idx.length, served_at: new Date().toISOString() });
+}
+
 // ── Intraday signals ───────────────────────────────────────────────────────
 async function handleSignal(env, body, asset) {
   const tf = String(body.tf || "").toUpperCase();
@@ -423,7 +502,7 @@ async function handleFail(env, body, asset) {
   if (cur.notified) msgs.unshift(failMessage(cur));
   let telegram = "none";
   if (msgs.length) telegram = (await sendTelegram(env, msgs.join("\n\n"))) ? "sent" : "failed";
-  recent.unshift({ event: "fail", asset, tf, dir: cur.dir, sweep: cur.sweep, candle_close: cur.candle_close, received_at: now });
+  recent.unshift({ event: "fail", asset, tf, dir: cur.dir, sweep: cur.sweep, candle_close: cur.candle_close, failed_at: cur.failed_at, received_at: now });
   while (recent.length > RECENT_MAX) recent.pop();
   await Promise.all([kvPut(env, "latest", latest), kvPut(env, "recent", recent), kvPut(env, "htf", htf)]);
   return json({ ok: true, asset, tf, event: "fail", telegram });
